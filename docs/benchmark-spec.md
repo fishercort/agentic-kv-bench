@@ -34,8 +34,8 @@ evaluation).
 
 ## Governing constraint: defensibility
 
-A skeptical reviewer must not be able to say "you invented a distribution that
-flatters your evictor." Every design choice in the trace suite serves that
+A skeptical reviewer must not be able to say the trace distributions were
+invented to flatter the evictor. Every design choice in the trace suite serves that
 constraint, through three defenses: anchor to public data, expose every knob,
 and include workloads where the policy should lose (see Scenario 5, the control,
 in `trace-schema.md`).
