@@ -1,7 +1,7 @@
-# agentic-kv-bench — validation on a production engine (Phase 4)
+# agentic-kv-bench — validation on a production engine
 
 The benchmark's findings come from a scratch engine (miniserve) plus a
-simulator. This phase checks that they survive contact with a production
+simulator. This stage checks that they survive contact with a production
 engine, and proposes the mechanism for them to land there permanently.
 
 ## The port

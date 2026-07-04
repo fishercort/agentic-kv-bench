@@ -3,17 +3,23 @@
 ## The gap
 
 Agentic workloads changed the shape of KV cache — subagents spawn and die,
-reasoning blocks open and close, tool outputs go cold instantly. In May–June
-2026 three concurrent papers attacked exactly this gap: prediction-based
-lifecycle-aware eviction (arXiv 2605.06472, retired-cache reclamation via
-workflow termination messages), SAGA's Workflow-Aware LRU (arXiv 2605.00528),
-and IntentKV (arXiv 2606.09916). Each is evaluated on its own private setup.
-There is no common benchmark, no shared baseline discipline, no oracle-relative
-reporting, and none of it is merged into vLLM, LMCache, or Dynamo mainline.
+reasoning blocks open and close, tool outputs go cold instantly. Four research
+groups converged on agentic KV cache management within eight months. Continuum
+(arXiv 2511.02230) came first from the systems side, proposing KV TTL to keep
+cache alive through tool-call gaps. In May–June 2026 two papers attacked the
+block-level gap directly: prediction-based lifecycle-aware eviction (arXiv
+2605.06472, retired-cache reclamation via workflow termination messages) and
+SAGA's Workflow-Aware LRU (arXiv 2605.00528). IntentKV (arXiv 2606.09916)
+attacked the same agentic problem from the token-level lane (see Scope below).
+Each is evaluated on its own private setup. There is no common benchmark, no
+shared baseline discipline, no oracle-relative reporting, and none of it is
+merged into vLLM, LMCache, or Dynamo mainline.
 
-The field produced three competing answers and no ground truth. This benchmark
-builds the ground truth — measured costs, a common benchmark, an oracle — so
-policies can be compared on the same traces under the same discipline.
+The block-level lane alone now has three competing answers — TTL,
+prediction-based reclamation, workflow-aware scoring — and no ground truth.
+This benchmark builds the ground truth — measured costs, a common benchmark, an
+oracle — so policies can be compared on the same traces under the same
+discipline.
 
 ## Scope: two lanes
 
@@ -50,9 +56,11 @@ from "starred and forgotten":
   one command replays every canonical trace against every bundled policy and
   emits the results table. If reproducing the README takes more than five
   minutes of setup, adoption dies.
-- **Real traces first:** anchor on the public kv-cache-tester corpus (739
-  anonymized Claude Code conversation traces, already used by LMCache's May 2026
-  MI300X benchmark) — cite and credit, don't re-collect. The synthetic generator
+- **Real traces first:** anchor on the public
+  [kv-cache-tester corpus](https://github.com/callanjfox/kv-cache-tester) (739
+  anonymized Claude Code conversation traces, already used by
+  [LMCache's May 2026 MI300X benchmark](https://blog.lmcache.ai/en/2026/05/12/benchmarking-lmcache-for-multi-turn-agentic-workloads-on-amd-mi300x/))
+  — cite and credit, don't re-collect. The synthetic generator
   exists for the one thing real traces can't give: a controllable
   ephemeral-fraction sweep and scenario isolation.
 - **Bundled baselines:** LRU, GDSF-style cost-aware, WA-LRU (SAGA), and
@@ -66,13 +74,13 @@ from "starred and forgotten":
   with the pre-registered EVAL_PLAN.md linked.
 - **Apache-2.0, semver, canonical pinned traces** so results are comparable
   across papers that cite different versions.
-- **Portable cost model — `agentic-kv-bench calibrate`:** ship the Phase 2
+- **Portable cost model — `agentic-kv-bench calibrate`:** ship the cost-model
   measurement scripts as a CLI that measures prefill curves and tier bandwidths
   on the user's own hardware/model and emits a cost-model config the simulator
   consumes. Bundled constants are the default; calibrated constants make
   deployment-decision benching credible on the user's own stack. This is the
-  second life of the Phase 2 measurement methodology — a reusable tool, not a
-  one-off writeup.
+  second life of the measurement methodology — a reusable tool, not a one-off
+  writeup.
 - **Proprietary-workload path, documented:** a short guide for converting private
   production logs into the trace schema locally. Nothing phones home; the
   enterprise use case ("which policy should we deploy, and how far from the

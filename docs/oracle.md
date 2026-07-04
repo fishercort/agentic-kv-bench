@@ -4,7 +4,7 @@ Belady-style offline replay with perfect future knowledge.
 
 - For each eviction decision point, the oracle knows every future access and
   every future lifecycle event, and evicts to minimize total reconstruction cost
-  (from the Phase 2 cost model), not just miss count.
+  (from the calibrated cost model), not just miss count.
 - Honesty requirement, stated in the writeup: with variable block sizes and
   variable reconstruction costs this is a knapsack-flavored problem, so the
   oracle is a strong approximation (cost-greedy with lookahead), not provable

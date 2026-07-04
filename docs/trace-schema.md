@@ -51,11 +51,14 @@ published in the trace header.
 2. **Subagent fan-out** (orchestrator–worker). An orchestrator session spawns
    3–12 subagents sharing the orchestrator prefix; subagents terminate and their
    entire KV goes dead at a known instant. The sharpest test of the hint
-   interface: `subagent_terminate` should trigger immediate reclamation.
+   interface: `subagent_terminate` should trigger immediate reclamation. This
+   scenario has real-trace grounding, not just synthetic: the kv-cache-tester
+   corpus includes nested-subagent conversations (19 traces, 70 subagents).
 3. **Reasoning loops.** Requests with think-spans of 30–50% of generated tokens
-   that close before the final answer (the pattern NVIDIA called out: ~40% of
-   tokens becoming useless when the loop closes). Tests reasoning-span eviction
-   priority.
+   that close before the final answer (the pattern
+   [NVIDIA's Dynamo agentic-inference writeup](https://developer.nvidia.com/blog/full-stack-optimizations-for-agentic-inference-with-nvidia-dynamo/)
+   calls out: think blocks around 40% of generated tokens, ephemeral the moment
+   the loop closes). Tests reasoning-span eviction priority.
 4. **Multi-tenant support bots.** Many short sessions, a handful of heavy shared
    system prompts, Zipf-distributed tenant popularity. Mostly-durable workload;
    tests that lifecycle awareness does not regress the classic prefix-sharing
@@ -67,10 +70,13 @@ published in the trace header.
 
 ## Sourcing
 
-Real traces are the anchor, synthesis is the supplement. The kv-cache-tester
-corpus (739 anonymized Claude Code conversation traces, used by LMCache's May
-2026 MI300X benchmark) is the primary workload — convert it into the schema
-above, crediting the source. The synthetic generator remains for what real
+Real traces are the anchor, synthesis is the supplement. The
+[kv-cache-tester corpus](https://github.com/callanjfox/kv-cache-tester)
+(739 anonymized Claude Code conversation traces — 59k requests, including
+nested-subagent conversations — used by
+[LMCache's May 2026 MI300X benchmark](https://blog.lmcache.ai/en/2026/05/12/benchmarking-lmcache-for-multi-turn-agentic-workloads-on-amd-mi300x/))
+is the primary workload — convert it into the schema above, crediting the
+source. The synthetic generator remains for what real
 traces cannot provide: the controllable ephemeral-fraction sweep, scenario
 isolation (fan-out-only, reasoning-only), and the Scenario 5 control. Secondary
 calibration sources for the generator: Mooncake's published production traces and
