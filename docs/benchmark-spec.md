@@ -80,7 +80,9 @@ from "starred and forgotten":
   consumes. Bundled constants are the default; calibrated constants make
   deployment-decision benching credible on the user's own stack. This is the
   second life of the measurement methodology — a reusable tool, not a one-off
-  writeup.
+  writeup. Because the cost model is parametric, conclusions are reported
+  across model-scale cost profiles — anchored profiles carry measured claims,
+  derived profiles are labeled extrapolations — see EVAL_PLAN.md.
 - **Proprietary-workload path, documented:** a short guide for converting private
   production logs into the trace schema locally. Nothing phones home; the
   enterprise use case ("which policy should we deploy, and how far from the

@@ -12,6 +12,13 @@ production engine at real scale. Execution mode (c) in
 `policy-interface.md` — the port reuses the same traces, so the comparison
 is like-for-like.
 
+This run doubles as the 8B-class **anchored cost profile** for the scale sweep
+(EVAL_PLAN.md). Budgeted option, executed schedule-permitting: a 70B-class
+anchor on a rented 2×H100 TP2 vLLM deployment — calibrate + full trace sweep,
+first thing cut under time pressure; at TP2 the cost model gains an NVLink
+transfer term absent at single-GPU scales (labeled in the profile), and the
+same deployment yields a near-free fp8 second profile.
+
 ## Headline charts
 
 - p95/p99 TTFT and throughput vs baselines under memory pressure.
