@@ -9,7 +9,7 @@ import os
 import pytest
 
 from agentic_kv_bench.convert import (
-    BLOCK_TOKENS,
+    DEFAULT_BLOCK_TOKENS,
     SubagentTrace,
     UnexpectedTrace,
     convert_trace,
@@ -17,7 +17,7 @@ from agentic_kv_bench.convert import (
 
 
 def src(requests, system_tokens=0, tid="t_test"):
-    return {"id": tid, "block_size": BLOCK_TOKENS, "system_tokens": system_tokens,
+    return {"id": tid, "block_size": DEFAULT_BLOCK_TOKENS, "system_tokens": system_tokens,
             "totals": {"subagent_count": 0}, "requests": requests}
 
 
@@ -56,7 +56,7 @@ def test_rewarming_is_not_ephemeral():
 
 
 def test_span_kinds_and_confidence():
-    sys_tokens = 2 * BLOCK_TOKENS  # 2 system blocks
+    sys_tokens = 2 * DEFAULT_BLOCK_TOKENS  # 2 system blocks
     reqs = [
         req([1, 2, 3], t=0.0),  # blocks 1,2=system(measured), 3=history(residual)
         req([1, 2, 3, 7], t=1.0, input_types=["text", "tool_result"]),  # 7=tool_output

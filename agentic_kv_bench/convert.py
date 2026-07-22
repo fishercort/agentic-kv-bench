@@ -6,16 +6,24 @@ Decisions there govern ephemeral definition, confidence tiering, and subagent
 deferral.
 
 A source trace is a JSON object with a `requests` array. Normal requests carry
-`hash_ids` (one content hash per BLOCK_TOKENS-token prompt block); subagent
+`hash_ids` (one content hash per block_size-token prompt block); subagent
 requests (type "subagent") carry no hash_ids and a nested `requests` array.
 """
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 
-from agentic_kv_bench.schema import LifecycleEvent, Request, Span, TraceStats
+from agentic_kv_bench.schema import (
+    SCHEMA_VERSION,
+    LifecycleEvent,
+    Request,
+    Span,
+    TraceStats,
+)
 
-BLOCK_TOKENS = 64  # kv-cache-tester block size
+# Fallback only. The block size is READ from each source trace's block_size
+# field (portability: the data states its own geometry, we do not assume it).
+DEFAULT_BLOCK_TOKENS = 64
 
 
 class UnexpectedTrace(Exception):
@@ -72,7 +80,8 @@ def convert_trace(trace: dict) -> tuple[list[Request], TraceStats]:
     """
     reqs = _normal_requests(trace)
     session_id = trace["id"]
-    sys_blocks = -(-trace.get("system_tokens", 0) // BLOCK_TOKENS)
+    block_tokens = trace.get("block_size", DEFAULT_BLOCK_TOKENS)
+    sys_blocks = -(-trace.get("system_tokens", 0) // block_tokens)
     n = len(reqs)
 
     blocks: dict[int, _Block] = {}  # block hash -> info
@@ -121,7 +130,7 @@ def convert_trace(trace: dict) -> tuple[list[Request], TraceStats]:
             b.appearances.append(i)
 
         # Emit this request's spans: maximal runs of same (kind, confidence).
-        spans = _runs_to_spans(prefix, blocks, session_id, i)
+        spans = _runs_to_spans(prefix, blocks, session_id, i, block_tokens)
         schema_requests.append(
             Request(
                 req_id=f"{session_id}-r{i:04d}",
@@ -134,12 +143,13 @@ def convert_trace(trace: dict) -> tuple[list[Request], TraceStats]:
         )
         prev_prefix = prefix
 
-    stats = _finalize(session_id, n, n_compactions, blocks)
+    stats = _finalize(session_id, n, n_compactions, blocks, block_tokens)
     return schema_requests, stats
 
 
 def _runs_to_spans(
-    prefix: list[int], blocks: dict[int, _Block], session_id: str, turn: int
+    prefix: list[int], blocks: dict[int, _Block], session_id: str, turn: int,
+    block_tokens: int,
 ) -> list[Span]:
     spans: list[Span] = []
     run_start = 0
@@ -155,7 +165,7 @@ def _runs_to_spans(
                 Span(
                     span_id=f"{session_id}-t{turn}-s{len(spans)}",
                     kind=b.kind,
-                    tokens=(j - run_start) * BLOCK_TOKENS,
+                    tokens=(j - run_start) * block_tokens,
                     confidence=b.confidence,
                 )
             )
@@ -163,7 +173,7 @@ def _runs_to_spans(
     return spans
 
 
-def _finalize(session_id, n, n_compactions, blocks) -> TraceStats:
+def _finalize(session_id, n, n_compactions, blocks, block_tokens) -> TraceStats:
     # Reuse count = number of DISTINCT requests whose prefix contains the block.
     reuse_hist: Counter[int] = Counter()
     ephem_blocks = 0
@@ -175,7 +185,7 @@ def _finalize(session_id, n, n_compactions, blocks) -> TraceStats:
     for b in blocks.values():
         distinct = len(set(b.appearances))
         reuse_hist[distinct] += 1
-        kbc[b.kind][b.confidence] += BLOCK_TOKENS
+        kbc[b.kind][b.confidence] += block_tokens
         last = max(b.appearances)
         if last == n - 1 and distinct == 1:
             continue  # final-request-only: undetermined, excluded (Decision 1)
@@ -185,6 +195,7 @@ def _finalize(session_id, n, n_compactions, blocks) -> TraceStats:
     ephemeral_fraction = (ephem_blocks / denom_blocks) if denom_blocks else 0.0
 
     return TraceStats(
+        schema_version=SCHEMA_VERSION,
         session_id=session_id,
         n_requests=n,
         n_compactions=n_compactions,

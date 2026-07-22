@@ -6,6 +6,11 @@ conversation.
 import json
 from dataclasses import asdict, dataclass, field
 
+# The stable cross-version contract. Pinned canonical traces and any user's
+# policy both target a schema_version; results are comparable only within one.
+# Bump on any breaking change to the schema below.
+SCHEMA_VERSION = 1
+
 SpanKind = str  # system_prompt | history | tool_output | reasoning
 Confidence = str  # measured | derived | residual
 
@@ -46,6 +51,7 @@ class TraceStats:
     """Per-trace conversion report: the measured knobs and the confidence
     accounting a reviewer needs to trust the derivation."""
 
+    schema_version: int
     session_id: str
     n_requests: int
     n_compactions: int
