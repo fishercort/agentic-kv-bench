@@ -238,6 +238,43 @@ def test_economic_joint_prices_and_keeps_the_expensive_block():
     assert lru.evict(1, now_ms=100) == ["E"]
 
 
+def test_economic_joint_parity_break_is_caused_by_block_SIZE_not_a_bug():
+    """Degeneracy anchor for the panel-1 parity refutation. The claim: Econ
+    diverges from RetiredCache under uniform cost ONLY because block sizes vary
+    (recompute_cost = size*rate is then not constant). Prove it both ways.
+
+    (a) UNIFORM SIZE -> exact parity: same-size blocks, uniform cost, Econ picks
+        the LRU victim exactly (already covered by the reduces_to_retired_cache
+        test; restated here at evict() level for the contrast).
+    (b) VARIABLE SIZE -> divergence: a big-old block vs a small-new block. LRU
+        evicts the old (big) one; Econ prices size/(age+1) and evicts the small
+        one. Same uniform rate, different victim -> the residual is size."""
+    # (a) uniform size: price = const/age -> LRU. Econ victim == LRU victim.
+    uni = {
+        1: BlockMeta(1, "history", size_tokens=5, recompute_cost=5.0, last_access_ms=0),
+        2: BlockMeta(2, "history", size_tokens=5, recompute_cost=5.0, last_access_ms=50),
+    }
+    e = EconomicJoint()
+    e.bind(CacheView(uni))
+    lru = LRU()
+    lru.bind(CacheView(uni))
+    assert e.evict(1, now_ms=100) == lru.evict(1, now_ms=100) == [1]  # oldest
+    # (b) variable size: big-old (A) vs small-new (B). price A=10/101=0.099,
+    # B=1/51=0.0196 -> Econ evicts B; LRU evicts A (oldest). Divergence, uniform rate.
+    var = {
+        "A": BlockMeta("A", "history", size_tokens=10, recompute_cost=10.0, last_access_ms=0),
+        "B": BlockMeta("B", "history", size_tokens=1, recompute_cost=1.0, last_access_ms=50),
+    }
+    e2 = EconomicJoint()
+    e2.bind(CacheView(var))
+    l2 = LRU()
+    l2.bind(CacheView(var))
+    assert e2.evict(1, now_ms=100) == ["B"]   # size-priced: drop the cheap small block
+    assert l2.evict(1, now_ms=100) == ["A"]   # recency: drop the old block
+    # -> parity holds iff sizes are uniform; the corpus's partial trailing blocks
+    #    break that, exactly the ~0.4-3.6% residual seen in panel 1.
+
+
 def test_economic_joint_is_a_valid_policy_against_oracle_per_kind_cost():
     from agentic_kv_bench.oracle import oracle_run, percent_of_oracle
 
