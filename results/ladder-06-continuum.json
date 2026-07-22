@@ -11,5 +11,25 @@
     "regime_prediction": "If Continuum helps anywhere it is the critical band (cap/T ~0.45-0.53), same as retirement and pricing, giving the three-regime map a third consistent instance. At high pressure churn absorbs protection; at slack LRU is already optimal.",
     "falsifiable_edges": "(1) a degeneracy anchor != 160.5 is a bug; (2) a decisive high-pressure win (>5 points) would REFUTE the 'recency already protects the returning prefix' reasoning and would be the most interesting outcome; (3) a non-degenerate interior optimum that beats LRU in the band would show gap-aware protection is a real, separable signal."
   },
-  "results": "TBD - horizon sweep at the ladder cell (confirm both degeneracy anchors), best-interior vs LRU, then across the pressure grid for the regime map. Separate commit after this pre-registration."
+  "results": {
+    "horizon_sweep_at_cap_0_33": {
+      "LRU": 160.5,
+      "percent_of_oracle_by_gap_ms": {"0": 160.5, "1000": 160.5, "10000": 160.6, "60000": 160.7, "300000": 160.5, "3600000": 160.5, "1e12": 160.5},
+      "reading": "Continuum is LRU to within 0.2 points at EVERY horizon. Both degeneracy anchors confirmed at 160.5 (gap->0 protects nothing, gap->inf protects the whole active prefix). Gap-aware protection adds nothing at high pressure because idle != dead: recency already protects the returning prefix, so session-level protection overlaps it."
+    },
+    "across_pressure_gap_60000": {
+      "note": "absolute capacity-miss reduction vs LRU (negative = Continuum MISSES MORE); caps = int(cap/T * 3,698,880)",
+      "table": [
+        {"cap_over_T": 0.33, "lru_miss": 19360, "cont_miss": 19378, "saved": -18,   "saved_pct": -0.001},
+        {"cap_over_T": 0.41, "lru_miss": 11531, "cont_miss": 11732, "saved": -201,  "saved_pct": -0.017},
+        {"cap_over_T": 0.45, "lru_miss": 7727,  "cont_miss": 7928,  "saved": -201,  "saved_pct": -0.026},
+        {"cap_over_T": 0.49, "lru_miss": 4542,  "cont_miss": 5566,  "saved": -1024, "saved_pct": -0.225},
+        {"cap_over_T": 0.53, "lru_miss": 1511,  "cont_miss": 2447,  "saved": -936,  "saved_pct": -0.619}
+      ]
+    },
+    "best_case_is_degenerate": "Continuum's best achievable number at any pressure is LRU, reached at gap->0. At a real tool-call-scale horizon (60s) it does NOT help and actively HURTS in the band and slack (-22% at 0.49, -62% at 0.53): protecting sessions inside the horizon over-retains stale prefixes, evicting the live blocks that are actually about to be reused. This is the same converges-to-degenerate signature IdleTTL showed: a single-signal policy whose best case is its mechanism-off case is evidence the signal is wrong for the workload."
+  },
+  "prediction_outcome": "CONFIRMED, and sharper than registered. Degeneracy anchors confirmed (both 160.5). Mechanism prediction ('barely beats LRU, near-degenerate') was right in direction and stronger in fact: Continuum does not beat LRU at ANY horizon or pressure; its best case IS LRU and off-degenerate it hurts. Regime prediction ('if it helps, in the band') REFUTED informatively: it does not help in the band, it hurts MOST there. So gap-aware protection is the one mechanism that is purely redundant-to-harmful on this workload, unlike retirement (helps in band) and pricing (helps in band, fragile).",
+  "fairness_caveat_inference_only": "This is the INFERENCE-ONLY reconstruction: gaps are estimated from session-level recency, which is exactly the signal that turns out redundant. The paper's contribution is PREDICTING gaps from workflow structure (a hint). A workflow-hint Continuum that correctly separates 'session in a tool call, will return' from 'session finished' could target protection where recency cannot, and is NOT evaluated here. The honest claim is narrow and fair: inference-only gap-aware protection (recency-estimated gaps) provides no benefit and can backfire on agentic coding traces; the hint-driven version is future work and the natural next rung, exactly as for WA-LRU's graph-driven variant.",
+  "confirms_vs_tests": "Like IdleTTL, this CONFIRMS Continuum's premise (idle != dead, so idle-time must not drive eviction) while finding its inference-only protection mechanism does not separate from recency here. It does NOT test the workflow-hint version, which is where Continuum's real contribution lives."
 }
