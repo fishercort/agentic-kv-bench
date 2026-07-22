@@ -31,7 +31,7 @@ econ = json.loads((root / "results/ladder-05-economic.json").read_text())
 # retirement: saved-miss fraction vs cap/T, kept (above noise floor) cells only.
 ret = [(r["cap_over_T"], r["saved_pct"] * 100)
        for r in sweep["sweep"] if not r.get("excluded_noise_floor")]
-rx, ry = zip(*ret)
+rx, ry = zip(*ret, strict=True)
 
 # economic: full-corpus marginal, and leave-one-out mean/range at the band cells.
 p2 = econ["results"]["panel2_per_kind_cost"]["table_percent_of_oracle"]
@@ -89,7 +89,8 @@ ax2.legend(loc="lower left", frameon=False, fontsize=9)
 for x, name in [(0.36, "CHURN"), (0.48, "CRITICAL BAND"), (0.56, "SLACK")]:
     ax1.text(x, 33.6, name, ha="center", fontsize=9.5, color=GRAY, fontweight="bold")
 ax1.text(0.36, -1.7, "recency wins", ha="center", fontsize=8.5, color=GRAY, style="italic")
-ax1.text(0.48, -1.7, "lifecycle + pricing win", ha="center", fontsize=8.5, color=GRAY, style="italic")
+ax1.text(0.48, -1.7, "lifecycle + pricing win", ha="center", fontsize=8.5,
+         color=GRAY, style="italic")
 
 ax1.set_xlim(0.30, 0.58)
 fig.suptitle("Where agentic KV eviction policies actually help", fontsize=13, y=0.965)
