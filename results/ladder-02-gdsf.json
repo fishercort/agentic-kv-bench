@@ -1,7 +1,7 @@
 {
   "note": "Ladder rung 2: GDSF (Cherkasova 1998), the first cost-consulting policy. Under the linear cost model it reduces to LFU-with-aging, so this row measures what the FREQUENCY signal alone collects of LRU's 60-point room over the oracle. Answer: negative, and the canonical version's reset-thrash mechanism was predicted and is confirmed by ablation.",
   "date": "2026-07-21",
-  "config": {"sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_approx": 0.67,
+  "config": {"sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_cap_over_T": 0.33, "_ratio_note": "relabeled to cap/T; denominator = measured distinct tokens T=3,698,880 (11-session, block256); earlier 0.67 used a looser ~1.835M denominator; run config unchanged",
              "block_tokens": 256, "recompute_ms_per_token": 1.0, "interleave_gap_ms": 0},
   "results": {
     "LRU_floor":        {"percent_of_oracle": 160.5, "hit_pct": 91.7},

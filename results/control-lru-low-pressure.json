@@ -6,7 +6,8 @@
     "n_requests": 79,
     "interleave_gap_ms": 0,
     "capacity_tokens": 133235,
-    "pressure_ratio_approx": 1.4,
+    "pressure_ratio_cap_over_T": 0.69,
+    "_ratio_note": "relabeled to cap/T; denominator = measured distinct tokens T=193,728 (2-session s_0002+s_0700, block64); earlier 1.4 used a looser denominator; run config unchanged. Note this is a DIFFERENT corpus/granularity than the 11-session ladder, so its cap/T is on its own scale.",
     "recompute_ms_per_token": 1.0,
     "policy": "LRU (baseline floor)",
     "block_tokens": 64

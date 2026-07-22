@@ -2,7 +2,7 @@
   "note": "Ladder rung 1: IdleTTL, a NAIVE idle-time-expiry strawman. NOT Continuum/CacheTTL. Continuum's mechanism is gap-aware PROTECTION (keep KV alive through predicted tool-call gaps); naive idle-time eviction is its motivating counterexample, not its contribution. A faithful Continuum is hint-consuming and lands as its own rung once the hint interface is wired. This row is the mechanism lower bound: how badly a pure idle-time signal misleads on this workload.",
   "label_discipline": "In every table this appears in: 'IdleTTL (naive idle-time strawman)', never 'TTL (Continuum)'. Emailing the Continuum authors a table showing 'their' policy at 1648% would be the anti-pitch; this is not their policy.",
   "date": "2026-07-21",
-  "config": {"sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_approx": 0.67,
+  "config": {"sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_cap_over_T": 0.33, "_ratio_note": "relabeled to cap/T; denominator = measured distinct tokens T=3,698,880 (11-session, block256); earlier 0.67 used a looser ~1.835M denominator; run config unchanged",
              "block_tokens": 256, "recompute_ms_per_token": 1.0, "interleave_gap_ms": 0},
   "results": {
     "LRU_floor": {"percent_of_oracle": 160.5, "hit_pct": 91.7},

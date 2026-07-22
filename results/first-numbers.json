@@ -2,12 +2,14 @@
   "note": "First end-to-end percent-of-oracle numbers on real Claude Code traces (kv-cache-tester), 2026-07-21. The two regimes together are the honest frame for the eventual results table: the control shows the benchmark does not manufacture wins where theory says none; the pressure point shows the headroom lifecycle policies must earn.",
   "regimes": {
     "low_pressure_control": {
-      "sessions": 2, "capacity_tokens": 133235, "pressure_ratio_approx": 1.4,
+      "sessions": 2, "capacity_tokens": 133235, "pressure_ratio_cap_over_T": 0.69,
+      "_ratio_note": "relabeled to cap/T; denominator = T=193,728 (2-session s_0002+s_0700, block64); own scale, not the 11-session ladder's; earlier 1.4 was a looser denominator; config unchanged",
       "policy": "LRU", "percent_of_oracle": 100.5, "lru_hit_rate_pct": 95.4,
       "reading": "LRU near-optimal, as the pre-registered eval predicts for the regime where policy should not matter (Scenario-5 property)."
     },
     "high_pressure": {
-      "sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_approx": 0.67,
+      "sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_cap_over_T": 0.33,
+      "_ratio_note": "relabeled to cap/T; denominator = T=3,698,880 (11-session, block256); earlier 0.67 used a looser ~1.835M denominator; config unchanged",
       "policy": "LRU", "percent_of_oracle": 160.5, "lru_hit_rate_pct": 91.7,
       "reading": "LRU pays 60% more than the offline optimum: this is ROOM FOR POLICIES TO COMPETE OVER, not room for lifecycle policies to win. The ladder decides how much of that 60% the heuristic baselines (TTL, GDSF, WA-LRU) already capture without consulting a price or a hint; the economic policy competes for whatever remains. Worded carefully to avoid claiming the win before the ladder measures it."
     }
