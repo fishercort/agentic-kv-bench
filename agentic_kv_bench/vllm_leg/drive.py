@@ -73,6 +73,28 @@ def _load_corpus(corpus_dir):
     return traces
 
 
+def trace_footprint(trace):
+    """Unique KV footprint of a session in tokens: distinct block hashes * corpus
+    block_size. This is what sits resident and drives cache pressure."""
+    bs = trace.get("block_size", 64)
+    distinct = set()
+    for r in trace["requests"]:
+        distinct.update(r.get("hash_ids", []))
+    return len(distinct) * bs
+
+
+def select_by_footprint(traces, footprint_cap):
+    """Split traces into (kept, excluded) at the footprint cap. The excluded deep tail is
+    returned so the caller can LOG it (no silent truncation) — number two is measured on
+    the kept band and the exclusion is reported."""
+    if footprint_cap is None:
+        return list(traces), []
+    kept, excluded = [], []
+    for t in traces:
+        (kept if trace_footprint(t) <= footprint_cap else excluded).append(t)
+    return kept, excluded
+
+
 def main(argv=None):
     """CLI: shard + synthesize the corpus and replay each shard into its instance,
     sessions launched concurrently and paced by arrival time. Box-only (needs httpx)."""
@@ -89,6 +111,12 @@ def main(argv=None):
     p.add_argument("--block-size", type=int, required=True)
     p.add_argument("--vocab-size", type=int, required=True)
     p.add_argument("--speedup", type=float, default=1.0, help="inf = asap")
+    p.add_argument("--max-concurrent", type=int, default=None,
+                   help="cap in-flight sessions (sets concurrent working set = the band); "
+                        "unset = all at once (only for tiny smoke runs)")
+    p.add_argument("--footprint-cap", type=int, default=None,
+                   help="replay only sessions whose unique KV footprint (distinct blocks * "
+                        "corpus block_size) <= this; the excluded deep tail is logged, not hidden")
     a = p.parse_args(argv)
 
     base = {}
@@ -96,14 +124,29 @@ def main(argv=None):
         k, v = pair.split("=", 1)
         base[int(k)] = v
     traces = _load_corpus(a.corpus)
-    workload = build_workload(traces, len(base), a.shared_prefix_blocks,
+    kept, excluded = select_by_footprint(traces, a.footprint_cap)
+    if excluded:
+        # no silent truncation: the deep tail is reported, not hidden (§3, provenance rule)
+        print(f"footprint-cap {a.footprint_cap}: replaying {len(kept)} sessions, "
+              f"EXCLUDED {len(excluded)} deep-tail sessions (reported in the leg's scope)")
+    workload = build_workload(kept, len(base), a.shared_prefix_blocks,
                               a.block_size, a.vocab_size)
 
+    # concurrency cap = the band control: at most K sessions in flight -> concurrent
+    # working set = K * mean_footprint, which sets cap/demand (see runbook band table).
+    gate = threading.Semaphore(a.max_concurrent) if a.max_concurrent else None
+
     def run_session(url, sess):
-        for delay, r in pace(sess, a.speedup):
-            if delay:
-                time.sleep(delay)
-            send_completion(url, r["token_ids"], max(1, r["out"]), r["model"])
+        if gate:
+            gate.acquire()
+        try:
+            for delay, r in pace(sess, a.speedup):
+                if delay:
+                    time.sleep(delay)
+                send_completion(url, r["token_ids"], max(1, r["out"]), r["model"])
+        finally:
+            if gate:
+                gate.release()
 
     threads = []
     for inst, sessions in workload.items():
@@ -115,7 +158,8 @@ def main(argv=None):
     for t in threads:
         t.join()
     n_sess = sum(len(s) for s in workload.values())
-    print(f"replayed {n_sess} sessions across {len(base)} instances")
+    print(f"replayed {n_sess} sessions across {len(base)} instances "
+          f"(max_concurrent={a.max_concurrent})")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,13 @@ on the box; their inputs are decided here."""
 
 import pytest
 
-from agentic_kv_bench.vllm_leg.drive import build_workload, pace, shard_traces
+from agentic_kv_bench.vllm_leg.drive import (
+    build_workload,
+    pace,
+    select_by_footprint,
+    shard_traces,
+    trace_footprint,
+)
 from agentic_kv_bench.vllm_leg.kv_events import SchemaDriftError
 from agentic_kv_bench.vllm_leg.mock_stream import GOLDEN, GOLDEN_FINGERPRINT
 from agentic_kv_bench.vllm_leg.subscribe import check_schema, seed_agreement
@@ -58,6 +64,20 @@ def test_pace_deltas_follow_arrival_times():
     assert [d for d, _ in pace(reqs, speedup=float("inf"))] == [0.0, 0.0, 0.0]
     # speedup halves wall-clock
     assert [d for d, _ in pace(reqs, speedup=2.0)] == [0.0, 1.0, 0.25]
+
+
+def test_footprint_and_selection_split_deep_tail():
+    # distinct blocks * corpus block_size; repeated ids don't inflate footprint
+    t_small = {"id": "a", "block_size": 64,
+               "requests": [{"hash_ids": [1, 2, 3]}, {"hash_ids": [1, 2, 3, 4]}]}
+    assert trace_footprint(t_small) == 4 * 64  # 4 distinct blocks
+    t_big = {"id": "b", "block_size": 64, "requests": [{"hash_ids": list(range(1, 100))}]}
+    kept, excluded = select_by_footprint([t_small, t_big], footprint_cap=64 * 10)
+    assert [t["id"] for t in kept] == ["a"]
+    assert [t["id"] for t in excluded] == ["b"]  # deep tail returned, not dropped silently
+    # no cap -> everything kept, nothing excluded
+    kept2, excluded2 = select_by_footprint([t_small, t_big], footprint_cap=None)
+    assert len(kept2) == 2 and excluded2 == []
 
 
 def test_build_workload_synthesizes_per_shard():
