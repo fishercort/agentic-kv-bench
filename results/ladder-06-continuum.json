@@ -1,0 +1,15 @@
+{
+  "note": "Ladder rung 6: Continuum / CacheTTL (arXiv 2511.02230), gap-aware PROTECTION, our faithful reconstruction of the mechanism. This closes the head-to-head: the third published policy is now evaluated, not represented by the IdleTTL strawman. Continuum keeps a session's KV alive through tool-call gaps and releases it only when the session is predicted done. Disclosed substitution: gap estimated from session-level recency against a swept horizon, where the paper predicts it from workflow (a hint); the hint version is the perfect-signal upper bound.",
+  "date": "2026-07-22",
+  "provenance": "Committed with results=TBD BEFORE the run (strict protocol; git timestamp proves prediction precedes number).",
+  "config": {"sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_cap_over_T": 0.33,
+             "block_tokens": 256, "recompute_ms_per_token": 1.0, "interleave_gap_ms": 0,
+             "working_set_T": 3698880},
+  "prediction_registered_before_run": {
+    "degeneracy_anchors_hard": "gap_ms=0 protects nothing => exactly LRU (160.5); gap_ms -> very large protects every active session's whole prefix => LRU over the protected set (also ~160.5). Both hard anchors. Any Continuum win must be at an INTERIOR horizon.",
+    "mechanism_prediction": "Continuum should barely beat LRU at this high-pressure cell, for a specific reason the ladder already surfaced: the IdleTTL rung showed idle != dead because append-mostly prefixes are re-read in full each turn, so the ENTIRE prefix of an active session is 'returning', and recency already protects recently-touched blocks. Gap-aware protection at session granularity therefore overlaps heavily with what recency already does; it adds value only for blocks that are idle-past-recency but still returning, a thin slice on this workload. Registered expectation: Continuum's best interior horizon lands within a couple of points of LRU (158-162%), NOT a decisive win, and its horizon sweep may be near-degenerate (optimum at or close to an extreme). This CONFIRMS Continuum's premise (which IdleTTL already showed: idle-time signals must not be used to evict) while finding its protection mechanism adds little over recency here.",
+    "regime_prediction": "If Continuum helps anywhere it is the critical band (cap/T ~0.45-0.53), same as retirement and pricing, giving the three-regime map a third consistent instance. At high pressure churn absorbs protection; at slack LRU is already optimal.",
+    "falsifiable_edges": "(1) a degeneracy anchor != 160.5 is a bug; (2) a decisive high-pressure win (>5 points) would REFUTE the 'recency already protects the returning prefix' reasoning and would be the most interesting outcome; (3) a non-degenerate interior optimum that beats LRU in the band would show gap-aware protection is a real, separable signal."
+  },
+  "results": "TBD - horizon sweep at the ladder cell (confirm both degeneracy anchors), best-interior vs LRU, then across the pressure grid for the regime map. Separate commit after this pre-registration."
+}

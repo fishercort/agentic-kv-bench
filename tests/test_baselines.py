@@ -6,6 +6,7 @@ from agentic_kv_bench.baselines import (
     GDSF,
     LRU,
     WALRU,
+    Continuum,
     EconomicJoint,
     IdleTTL,
     RetiredCache,
@@ -73,6 +74,44 @@ def test_ttl_is_a_valid_policy_against_oracle():
     res = replay(trace, IdleTTL(ttl_ms=3), COST, capacity_tokens=2)
     ora = oracle_run(trace, COST, capacity_tokens=2)
     assert percent_of_oracle(res, ora) >= 100.0 - 1e-9  # oracle still the bound
+
+
+def test_continuum_protects_a_session_through_its_gap():
+    """Continuum's distinguishing mechanism vs LRU: it protects a session mid
+    tool-call gap and evicts a FINISHED session instead, where LRU would harvest
+    the idle-but-returning block. Session A is mid-gap (active 10 ms ago); session
+    B is done (active 95 ms ago). With gap_ms=20 only A is protected, so Continuum
+    drops B's block; LRU drops A's block (it is older)."""
+    c = Continuum(gap_ms=20)
+    resident = {
+        ("A", 1): BlockMeta(("A", 1), "history", 1, 1.0, last_access_ms=0),
+        ("B", 1): BlockMeta(("B", 1), "history", 1, 1.0, last_access_ms=5),
+    }
+    c.bind(CacheView(resident))
+    c._session_last = {"A": 90, "B": 5}  # A recent (mid-gap), B stale (done)
+    assert c.evict(1, now_ms=100) == [("B", 1)]  # protect A, spend the done session
+    lru = LRU()
+    lru.bind(CacheView(resident))
+    assert lru.evict(1, now_ms=100) == [("A", 1)]  # LRU harvests A's older block
+
+
+def test_continuum_degenerates_to_lru_at_zero_horizon():
+    """Converges-to-degenerate anchor: gap_ms=0 protects nothing, so Continuum is
+    exactly LRU. (The other limit, gap_ms huge, protects everything and is LRU
+    over the protected set; both ends are LRU, so any win is interior.)"""
+    trace = [acc(i, [((i % 3) + 1,)]) for i in range(9)]
+    lru = replay(trace, LRU(), COST, capacity_tokens=2)
+    cont = replay(trace, Continuum(gap_ms=0), COST, capacity_tokens=2)
+    assert cont.scored_recompute_cost == lru.scored_recompute_cost
+
+
+def test_continuum_is_a_valid_policy_against_oracle():
+    from agentic_kv_bench.oracle import oracle_run, percent_of_oracle
+
+    trace = [acc(i, [((i % 5) + 1,)]) for i in range(30)]
+    res = replay(trace, Continuum(gap_ms=3), COST, capacity_tokens=3)
+    ora = oracle_run(trace, COST, capacity_tokens=3)
+    assert percent_of_oracle(res, ora) >= 100.0 - 1e-9
 
 
 def test_gdsf_keeps_frequently_reused_blocks():

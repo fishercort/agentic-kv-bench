@@ -280,6 +280,66 @@ class EconomicJoint(Policy):
         return victims
 
 
+class Continuum(Policy):
+    """Gap-aware protection (CacheTTL / Continuum, arXiv 2511.02230), our faithful
+    reconstruction of the MECHANISM the paper contributes. Continuum's thesis:
+    an agent's KV goes idle during tool-call gaps but is NOT dead, because the
+    session resumes and re-reads its prefix; a recency evictor that harvests idle
+    blocks pays for it on resume. Continuum keeps a session's KV alive THROUGH its
+    predicted gaps and releases it only when the session is predicted finished.
+
+    Mechanism: a block is PROTECTED from eviction while its session has been
+    active within a gap horizon (some block of that session was accessed within
+    `gap_ms` of now); among UNPROTECTED blocks (sessions idle past the horizon,
+    predicted done) evict least-recently-used, dipping into protected blocks only
+    if the unprotected set cannot free enough. This is the exact contrast with
+    IdleTTL, the strawman: IdleTTL is block-level and EVICTIVE (drop anything
+    idle); Continuum is session-level and PROTECTIVE (hold through the gap).
+
+    Disclosed substitution, same discipline as WA-LRU: the paper PREDICTS each
+    gap from workflow structure (a hint); this reconstruction ESTIMATES the gap
+    from session-level recency against a fixed horizon, so it distinguishes a long
+    tool call from session-end only by that horizon. The workflow-hint version
+    (per-session predicted gaps) is the perfect-signal upper bound and consumes
+    the hint interface; this is its inference-only analogue. The horizon is swept.
+
+    Converges-to-degenerate diagnostic (the IdleTTL test, applied to Continuum):
+    gap_ms -> 0 protects nothing and is LRU; gap_ms -> infinity protects
+    everything and is again LRU over the protected set. Gap-aware protection helps
+    only if some interior horizon beats both, i.e. only if the workload actually
+    has recover-through-gap blocks a recency evictor wrongly harvests."""
+
+    def __init__(self, gap_ms: float = 5000.0):
+        self.gap_ms = gap_ms
+        self._session_last: dict = {}
+
+    @staticmethod
+    def _session_of(block_id):
+        return block_id[0] if isinstance(block_id, tuple) else block_id
+
+    def on_access(self, block_id, meta, now_ms: int) -> None:
+        self._session_last[self._session_of(block_id)] = now_ms
+
+    def evict(self, needed_tokens: int, now_ms: int) -> list:
+        resident = self.cache.resident()
+
+        def protected(b: object) -> bool:
+            last = self._session_last.get(self._session_of(b))
+            return last is not None and (now_ms - last) <= self.gap_ms
+
+        unprot = sorted((b for b in resident if not protected(b)),
+                        key=lambda b: resident[b].last_access_ms)
+        prot = sorted((b for b in resident if protected(b)),
+                      key=lambda b: resident[b].last_access_ms)
+        victims, freed = [], 0
+        for b in (*unprot, *prot):  # spend the predicted-done sessions first
+            victims.append(b)
+            freed += resident[b].size_tokens
+            if freed >= needed_tokens:
+                break
+        return victims
+
+
 class IdleTTL(Policy):
     """NAIVE idle-time expiry: a block idle longer than a fixed TTL is
     proactively evicted; under forced pressure, LRU.
