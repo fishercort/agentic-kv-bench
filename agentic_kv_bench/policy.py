@@ -26,17 +26,31 @@ class BlockMeta:
 
 
 class CacheView:
-    """Read-only view the harness hands the policy: the currently resident
-    blocks. A policy reads it in evict() to choose victims."""
+    """Read-only view the harness hands the policy: the EVICTABLE resident
+    blocks. Blocks the current request needs (its working set) are protected
+    and excluded, because a request's attention runs over its whole prefix at
+    once, so evicting a block it still needs is never valid. A policy therefore
+    physically cannot choose a protected block."""
 
     def __init__(self, resident: dict[int, BlockMeta]):
         self._resident = resident
+        self._protected: frozenset[int] = frozenset()
+
+    def _set_protected(self, protected: frozenset[int]) -> None:
+        """Harness-only: called once per request before eviction."""
+        self._protected = protected
 
     def resident(self) -> dict[int, BlockMeta]:
-        return self._resident
+        if not self._protected:
+            return dict(self._resident)
+        return {b: m for b, m in self._resident.items() if b not in self._protected}
 
     def resident_tokens(self) -> int:
-        return sum(m.size_tokens for m in self._resident.values())
+        return sum(
+            m.size_tokens
+            for b, m in self._resident.items()
+            if b not in self._protected
+        )
 
 
 class Policy(ABC):

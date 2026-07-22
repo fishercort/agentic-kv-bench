@@ -72,7 +72,8 @@ def replay(
     high_value_threshold: float | None = None,
 ) -> RunResult:
     resident: dict[int, BlockMeta] = {}
-    policy.bind(CacheView(resident))
+    view = CacheView(resident)
+    policy.bind(view)
     seen: set[int] = set()
 
     hits = compulsory = capacity = evictions = hv_capacity = 0
@@ -81,9 +82,17 @@ def replay(
     peak = 0
     resident_tokens = 0
 
-    def free_to_fit(need: int, now: int) -> None:
+    def free_to_fit(need: int, now: int, protected: frozenset[int]) -> None:
         nonlocal resident_tokens, evictions
         while capacity_tokens - resident_tokens < need:
+            evictable = sum(
+                m.size_tokens for b, m in resident.items() if b not in protected
+            )
+            if evictable < need - (capacity_tokens - resident_tokens):
+                raise RuntimeError(
+                    "request working set exceeds capacity: its prefix cannot be "
+                    "held resident even after evicting everything evictable"
+                )
             victims = policy.evict(need - (capacity_tokens - resident_tokens), now)
             if not victims:
                 raise RuntimeError(
@@ -91,12 +100,19 @@ def replay(
                     "a correct policy must free space or the request cannot be admitted"
                 )
             for vid in victims:
+                if vid in protected or vid not in resident:
+                    raise RuntimeError(
+                        f"policy tried to evict block {vid}, which is "
+                        f"{'needed by the current request' if vid in protected else 'not resident'}"
+                    )
                 m = resident.pop(vid)
                 resident_tokens -= m.size_tokens
                 evictions += 1
 
     for req in accesses:
         now = req.arrival_ms
+        working = frozenset(b.block_id for b in req.blocks)
+        view._set_protected(working)
         if hints_enabled:
             for ev in req.lifecycle_events:
                 policy.on_hint(ev, now)
@@ -125,7 +141,7 @@ def replay(
                     f"block {bref.block_id} ({bref.size_tokens} tok) exceeds "
                     f"capacity ({capacity_tokens} tok); no policy can admit it"
                 )
-            free_to_fit(bref.size_tokens, now)
+            free_to_fit(bref.size_tokens, now, working)
             meta = BlockMeta(
                 block_id=bref.block_id, kind=bref.kind,
                 size_tokens=bref.size_tokens, recompute_cost=rc,
