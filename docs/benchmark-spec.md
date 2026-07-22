@@ -4,8 +4,9 @@
 
 Agentic workloads changed the shape of KV cache — subagents spawn and die,
 reasoning blocks open and close, tool outputs go cold instantly. Four research
-groups converged on agentic KV cache management within eight months. Continuum
-(arXiv 2511.02230) came first from the systems side, proposing KV TTL to keep
+groups converged on agentic KV cache management within eight months. CacheTTL
+(arXiv 2511.02230, first released as Continuum) came first from the systems
+side, proposing KV TTL to keep
 cache alive through tool-call gaps. In May–June 2026 two papers attacked the
 block-level gap directly: prediction-based lifecycle-aware eviction (arXiv
 2605.06472, retired-cache reclamation via workflow termination messages) and
@@ -45,6 +46,35 @@ invented to flatter the evictor. Every design choice in the trace suite serves t
 constraint, through three defenses: anchor to public data, expose every knob,
 and include workloads where the policy should lose (see Scenario 5, the control,
 in `trace-schema.md`).
+
+## Related work and methodology alignment
+
+Where this sits, and what it deliberately borrows so results are comparable
+rather than novel-for-novelty's-sake.
+
+- **The field, mapped.** A 2026 survey on system-aware KV-cache optimization
+  (arXiv 2607.08057) is the related-work map. The block/request-level lane this
+  benchmark measures holds at least four converging methods (CacheTTL/Continuum
+  2511.02230, retired-cache 2605.06472, SAGA WA-LRU 2605.00528, and others);
+  the token-level lane (IntentKV 2606.09916, l2-norm eviction, learned per-head
+  methods such as KVP) is related work, not baselines here, per Scope. The
+  field is still growing and still has no common evaluation, which is the gap.
+- **Serving-metric vocabulary.** Reported metrics follow vLLM's
+  `benchmark_serving` convention (TTFT and TPOT as mean/median/P99, throughput,
+  goodput, over an arrival-rate sweep), so a reader can place these numbers
+  beside a vLLM or LMCache benchmark without translation. Deviating from that
+  vocabulary would make the benchmark harder to adopt, which defeats its
+  purpose.
+- **Arrival and workload calibration.** Arrival processes calibrate to the
+  public Azure LLM-inference conversation traces and Mooncake production
+  traces; agentic turn and tool-call structure is anchored to the recognized
+  agentic workloads (SWE-bench trajectories, BFCL) and complemented by this
+  benchmark's real Claude Code corpus, which most prior work lacks (it
+  evaluates on synthetic RULER/GSM8K or older ShareGPT/OASST2).
+- **Oracle grounding.** The offline oracle is grounded in caching theory
+  (Belady's MIN and the NP-hardness of general variable-size caching); see
+  `oracle.md`. The point is a principled approximation with a named gap, not an
+  unfalsifiable "optimal."
 
 ## Design-for-adoption requirements
 

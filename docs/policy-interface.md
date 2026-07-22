@@ -47,7 +47,7 @@ matters — the authors may check, and a baseline is only fair if it matches the
 source:
 
 - **LRU** — the floor.
-- **TTL-based eviction (Continuum, 2511.02230)** — keep KV alive through
+- **TTL-based eviction (CacheTTL / Continuum, 2511.02230)** — keep KV alive through
   tool-call gaps via time-to-live; the simplest agentic-aware baseline.
 - **GDSF-style cost-aware** — value = recompute_cost × reuse_prob / size.
 - **WA-LRU (SAGA, 2605.00528)** — normalized recency + reuse probability + size.
@@ -77,10 +77,18 @@ as a real contract rather than a demo assumption.
 
 ## Reported per run
 
-Percent-of-oracle, tokens recomputed, high-value hit rate (hits on
-expensive-to-recompute blocks, not just cheap ones — also a production-validation
-headline chart, see `validation.md`), p95/p99 TTFT (live mode), KV occupancy over time,
-realized ephemeral fraction.
+Headline and cache-specific: percent-of-oracle, tokens recomputed, high-value
+hit rate (hits on expensive-to-recompute blocks, not just cheap ones; also a
+production-validation headline chart, see `validation.md`), KV occupancy over
+time, realized ephemeral fraction.
+
+Serving metrics in the standard vocabulary, so results are directly comparable
+to how the field measures serving (vLLM `benchmark_serving`): TTFT and TPOT
+(time per output token) each as mean / median / P99, plus throughput and
+goodput, over an arrival-rate sweep. Live mode reports these end to end;
+simulator mode reports the cost-model analogues. Aligning the vocabulary is
+what lets a reader put these numbers next to a vLLM or LMCache benchmark
+without translation.
 
 ## Deliverable
 

@@ -40,7 +40,7 @@ See `trace-schema.md` for the definitions.
     near-free second profile: 70B at fp8 halves bytes/token with one flag —
     run it if the rental happens.
 - Hint modes: on / delayed by N ms / dropped w.p. p / off
-- Policies: LRU, Continuum TTL, GDSF-style cost-aware, WA-LRU, retired-cache
+- Policies: LRU, CacheTTL (Continuum) TTL, GDSF-style cost-aware, WA-LRU, retired-cache
   lifecycle, economic joint
 - Cross-product, stated explicitly: hint-consuming policies (retired-cache
   lifecycle, economic joint) run **with-hints and inference-only as separate
