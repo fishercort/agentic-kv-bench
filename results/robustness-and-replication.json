@@ -1,0 +1,28 @@
+{
+  "note": "Robustness and external-validity checks for the band findings, prompted by a researcher-level review. Three checks: leave-one-out on the retirement benefit (was previously only done for the economic policy), and independent random draws from the full 739-trace corpus to test whether the n=11 stride sample is representative. The headline: retirement's band benefit is SIGN-robust but magnitude-fragile, the economic policy's is not sign-robust, and the band PRESSURE REGIME itself is driven by a few atypically large sessions and does not replicate on typical independent draws.",
+  "date": "2026-07-22",
+  "retirement_leave_one_out": {
+    "metric": "capacity-miss reduction of RetiredCache-with-hints vs LRU, dropping one session at a time from the stride-sample 11",
+    "cap_over_T_0.49": {"full": 0.257, "mean": 0.150, "min": 0.000, "max": 0.297,
+      "values": [0.12,0.26,0.30,0.21,0.00,0.15,0.03,0.00,0.08,0.29,0.21]},
+    "cap_over_T_0.53": {"full": 0.257, "mean": 0.168, "min": 0.000, "max": 0.337,
+      "values": [0.34,0.18,0.19,0.26,0.00,0.18,0.05,0.00,0.20,0.25,0.19]},
+    "verdict": "Sign-robust: retirement NEVER hurts across all 11 drops (min 0.0%). But magnitude-fragile: the full-corpus 25.7% is the optimistic tail; the robust central estimate is ~15-17%, range 0-34%. Two specific sessions (drop indices 4 and 7 zero the benefit) carry much of it. Report ~15% as the retirement band benefit, with 25.7% flagged as the full-sample tail - NOT the 27% the first pass headlined."
+  },
+  "economic_leave_one_out_summary": {
+    "cap_over_T_0.45": {"mean": 0.119, "min": 0.010, "max": 0.260},
+    "cap_over_T_0.49": {"mean": -0.035, "min": -0.721, "max": 0.163},
+    "verdict": "NOT sign-robust: a single dropped session flips the 0.49 cell from +16% to -72%. The economic band win is not established. (From ladder-05.)"
+  },
+  "independent_draw_replication": {
+    "method": "Draw random session sets from all 739 traces (seeded), interleave, measure at cap/T=0.49. Tests whether the stride-sample 11 is representative or whether its band pressure is an artifact of which sessions it contains.",
+    "eleven_session_draws_cap_0.49": [
+      {"seed": 1, "lru_miss": 332}, {"seed": 2, "lru_miss": 196},
+      {"seed": 3, "lru_miss": 0}, {"seed": 4, "lru_miss": 0}, {"seed": 5, "lru_miss": 433}
+    ],
+    "thirty_session_draw_cap_0.49": [{"seed": 1, "lru_miss": 388}],
+    "stride_sample_11_for_comparison": {"lru_miss_cap_0.49": 4746},
+    "verdict": "DECISIVE and sobering. All six independent draws (five 11-session, one 30-session) land BELOW the 1,000-miss noise floor at cap/T=0.49; several have zero capacity misses. The stride sample has 4,746. The band pressure in every headline result is driven by a handful of atypically large sessions the stride sample happens to include (e.g. the ~2.4MB and ~1.2MB traces); typical random draws of equal or greater session COUNT do not reach measurable band pressure at all. Consequence: the band magnitudes are conditional on high-volume sessions being present, not on cache provisioning alone, and do not represent a typical small workload. This is a first-order external-validity limitation of the n=11 result. The mechanism claims (retirement helps in the band, sign-robust on high-volume samples; Continuum does not) stand on the stride sample; the MAGNITUDES and the claim 'the band is where you operate' are provisional pending a full-corpus run with many more sessions.",
+    "next_measurement": "Run the full sweep on large interleaved draws (60-200 sessions) from the 739 so band pressure is reliably present and the magnitudes get real confidence intervals. The corpus is now cloned locally; this is compute, not new code."
+  }
+}
