@@ -107,6 +107,32 @@ sharing unmeasurable; Scenario 4 stays synthetic, or uses system-prompt content
 identity if the corpus ever ships a global-scope variant. Stated as a limitation
 rather than papered over.
 
+## Open finding (surfaced by running the converter on real traces)
+
+The "ephemeral fraction is directly measured" claim above is wrong for this
+corpus, and running the v1 converter on 12 real traces proved it. Because
+agentic prefixes are append-only, semantically dead KV (a reasoning block that
+is useless after its turn) stays PHYSICALLY in the prompt prefix of every later
+turn until a compaction event drops it. So literal reuse-count reads near-zero
+ephemeral (0 to 9 percent in the sample), while the span-kind table shows the
+real signal is huge (reasoning is 78 to 91 percent of tokens in reasoning-heavy
+traces). Two consequences, both open decisions:
+
+1. **Ephemerality is two distinct metrics, not one.** Physical-eviction
+   ephemerality (literal reuse; near-zero until compaction) is measured and is
+   now named `physical_reuse_ephemeral_fraction`. Semantic ephemerality (KV
+   that went useless, the metric the benchmark motivates) is a DERIVED
+   inference from span kinds plus compaction, not a measurement. The headline
+   knob must be the semantic one, reported at derived confidence, with the
+   physical one alongside. This corrects the "directly measured" claim above.
+2. **Reasoning derivation is greedy.** Tagging all new content after a thinking
+   turn as reasoning sweeps in the response and next tool call, inflating the
+   reasoning share. A tighter rule is needed (for example, bound the reasoning
+   span by the produced-thinking token count when available).
+
+The v1 converter is committed and tested; these two are the next decisions
+before the ephemeral metric graduates.
+
 ## What consumes the output
 
 The simulator replays these traces against the cost model. Per the Phase 2
@@ -131,15 +157,21 @@ An unrecognized type, a mid-prefix divergence that is neither boundary nor clean
 compaction, or a global-scope trace is surfaced, not silently dropped. Silent
 drops are how a benchmark quietly stops representing its corpus.
 
-## Open decisions (surface before the converter is written)
+## Decisions (2026-07-21)
 
-1. **Ephemeral close at re-warming.** A block can drop then a later request
-   re-include it. Proposed: close = last drop (a re-warmed block is not
-   ephemeral). Pins the headline metric; a stated decision.
-2. **Span-kind confidence reporting.** Proposed: every span carries its
-   confidence tier (measured / typed-signal / residual); the corpus README
-   reports the kind distribution with confidence, so a reviewer sees measured vs
-   inferred.
-3. **Subagent traces first or last.** Proposed: convert the ~720 non-subagent
-   traces first (Scenarios 1, 3), then the 19 subagent traces as a dedicated
-   pass with the subagent_terminate derivation.
+1. **Ephemeral definition (the headline metric).** A block is ephemeral if its
+   hash appears in exactly one request's prefix (reuse-count 1) AND that
+   appearance is before the final request (it had a reuse opportunity).
+   Re-warming resolves for free: a dropped-then-returned block has count >= 2,
+   so it is not ephemeral. Final-request-only blocks are undetermined (no reuse
+   opportunity) and excluded from both numerator and denominator. Conservative
+   by construction (undercounts). The full reuse-count distribution is also
+   emitted, so the single fraction is not the only view.
+2. **Confidence tiering.** Every span carries confidence in {measured, derived,
+   residual}; the converter emits an aggregate kind-by-confidence table.
+   system_prompt is measured (from system_tokens); tool_output and reasoning are
+   derived (from typed signals); history is residual.
+3. **Subagents deferred, never dropped.** v1 converts the non-subagent traces;
+   subagent-bearing traces are detected, counted, and explicitly skipped with a
+   logged reason, deferred to a v2 pass with the subagent_terminate derivation.
+   Self-validation asserts the skip count matches the expected count.
