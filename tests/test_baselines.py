@@ -2,7 +2,7 @@
 against a hand-built trace, and it remains a valid policy (oracle stays the lower
 bound). The mentor's competent-adversary oracle-fuzz upgrade fires at GDSF."""
 
-from agentic_kv_bench.baselines import LRU, TTL
+from agentic_kv_bench.baselines import LRU, IdleTTL
 from agentic_kv_bench.harness import BlockRef, CostParams, RequestAccess, replay
 
 COST = CostParams(recompute_ms_per_token=1.0)
@@ -28,7 +28,7 @@ def test_ttl_proactively_expires_idle_blocks():
         acc(3001, [1]),       # re-access block 1
     ]
     lru = replay(trace, LRU(), COST, capacity_tokens=100)
-    ttl = replay(trace, TTL(ttl_ms=1500), COST, capacity_tokens=100)
+    ttl = replay(trace, IdleTTL(ttl_ms=1500), COST, capacity_tokens=100)
     # LRU never evicts (no pressure) -> block 1 is a hit at the end
     assert lru.capacity_misses == 0
     # TTL expires block 1 (idled 3000 > 1500) -> its re-access is a capacity miss
@@ -38,7 +38,7 @@ def test_ttl_proactively_expires_idle_blocks():
 def test_ttl_keeps_blocks_within_ttl():
     # block 1 re-touched inside the TTL window is never expired.
     trace = [acc(0, [1]), acc(500, [1]), acc(900, [1])]
-    ttl = replay(trace, TTL(ttl_ms=1000), COST, capacity_tokens=100)
+    ttl = replay(trace, IdleTTL(ttl_ms=1000), COST, capacity_tokens=100)
     assert ttl.n_evictions == 0 and ttl.capacity_misses == 0
 
 
@@ -47,7 +47,7 @@ def test_ttl_falls_back_to_lru_under_pressure():
     # so TTL must fall back to LRU eviction and matches LRU's cost.
     trace = [acc(i, [(i % 3) + 1]) for i in range(6)]
     lru = replay(trace, LRU(), COST, capacity_tokens=2)
-    ttl = replay(trace, TTL(ttl_ms=10_000), COST, capacity_tokens=2)
+    ttl = replay(trace, IdleTTL(ttl_ms=10_000), COST, capacity_tokens=2)
     assert ttl.scored_recompute_cost == lru.scored_recompute_cost
 
 
@@ -55,6 +55,6 @@ def test_ttl_is_a_valid_policy_against_oracle():
     from agentic_kv_bench.oracle import oracle_run, percent_of_oracle
 
     trace = [acc(i, [(i % 4) + 1]) for i in range(20)]
-    res = replay(trace, TTL(ttl_ms=3), COST, capacity_tokens=2)
+    res = replay(trace, IdleTTL(ttl_ms=3), COST, capacity_tokens=2)
     ora = oracle_run(trace, COST, capacity_tokens=2)
     assert percent_of_oracle(res, ora) >= 100.0 - 1e-9  # oracle still the bound

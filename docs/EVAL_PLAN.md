@@ -55,8 +55,11 @@ granularity decision below.
     near-free second profile: 70B at fp8 halves bytes/token with one flag —
     run it if the rental happens.
 - Hint modes: on / delayed by N ms / dropped w.p. p / off
-- Policies: LRU, CacheTTL (Continuum) TTL, GDSF-style cost-aware, WA-LRU, retired-cache
-  lifecycle, economic joint
+- Policies: LRU (floor), IdleTTL (naive idle-time strawman, the mechanism
+  lower bound — NOT Continuum), GDSF-style cost-aware, WA-LRU (SAGA),
+  retired-cache lifecycle, a faithful CacheTTL/Continuum (gap-aware protection,
+  hint-consuming — distinct from IdleTTL, lands with the hint interface), and
+  the economic joint policy last
 - Cross-product, stated explicitly: hint-consuming policies (retired-cache
   lifecycle, economic joint) run **with-hints and inference-only as separate
   rows** — that split is a headline ablation, not a footnote. The full grid is

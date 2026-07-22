@@ -1,0 +1,17 @@
+{
+  "note": "Ladder rung 1: IdleTTL, a NAIVE idle-time-expiry strawman. NOT Continuum/CacheTTL. Continuum's mechanism is gap-aware PROTECTION (keep KV alive through predicted tool-call gaps); naive idle-time eviction is its motivating counterexample, not its contribution. A faithful Continuum is hint-consuming and lands as its own rung once the hint interface is wired. This row is the mechanism lower bound: how badly a pure idle-time signal misleads on this workload.",
+  "label_discipline": "In every table this appears in: 'IdleTTL (naive idle-time strawman)', never 'TTL (Continuum)'. Emailing the Continuum authors a table showing 'their' policy at 1648% would be the anti-pitch; this is not their policy.",
+  "date": "2026-07-21",
+  "config": {"sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_approx": 0.67,
+             "block_tokens": 256, "recompute_ms_per_token": 1.0, "interleave_gap_ms": 0},
+  "results": {
+    "LRU_floor": {"percent_of_oracle": 160.5, "hit_pct": 91.7},
+    "IdleTTL_5s":   {"percent_of_oracle": 1648.9, "hit_pct": 48.6},
+    "IdleTTL_30s":  {"percent_of_oracle": 715.0, "hit_pct": 75.7},
+    "IdleTTL_120s": {"percent_of_oracle": 342.0, "hit_pct": 86.5},
+    "IdleTTL_600s": {"percent_of_oracle": 176.4, "hit_pct": 91.3}
+  },
+  "mechanism_chain": "Append-only agentic prefixes are re-read in full each turn, so an idle block is typically re-accessed on the next turn: idle != dead. The semantic-ephemeral analysis (docs/trace-conversion.md open finding) predicted this; here a policy family pays for it measurably (60 to 1500 points). This is the benchmark's job: converting a workload observation into a policy-relevant number with a mechanism attached.",
+  "converges_to_degenerate": "IdleTTL's one-parameter sweep improves monotonically as TTL grows, and its optimum is the limit TTL -> infinity, which is exactly LRU (the mechanism turned off). A single-signal policy whose best case is its degenerate case is the cleanest possible evidence that the signal (idle time) is WRONG for the workload, not merely mistuned. This generalizes: it is the diagnostic to apply to every single-signal policy the ladder lands.",
+  "confirms_vs_tests": "The data CONFIRMS Continuum's premise (idle-time signals mislead catastrophically on agentic re-reads). It does NOT test Continuum's contribution (gap-aware protection), which has not been run yet and could perform materially better."
+}

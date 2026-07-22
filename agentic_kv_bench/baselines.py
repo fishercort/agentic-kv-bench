@@ -3,8 +3,9 @@ docs/policy-interface.md. Fidelity matters (the adoption pitch to the papers'
 authors is a faithful baseline), so each policy cites its source and rule, and
 notes any simplification forced by the simulator's scope.
 
-LRU is the floor. The ladder adds TTL (CacheTTL/Continuum), GDSF, WA-LRU
-(SAGA), and retired-cache lifecycle.
+LRU is the floor. IdleTTL is a naive strawman (NOT Continuum). The ladder adds
+GDSF, WA-LRU (SAGA), retired-cache lifecycle, and a faithful Continuum/CacheTTL
+(gap-aware protection, hint-consuming) once the hint interface is wired.
 """
 
 from agentic_kv_bench.policy import Policy
@@ -30,18 +31,23 @@ class LRU(Policy):
         return _lru_victims(self.cache.resident(), needed_tokens)
 
 
-class TTL(Policy):
-    """Time-to-live eviction (CacheTTL / Continuum, arXiv 2511.02230).
+class IdleTTL(Policy):
+    """NAIVE idle-time expiry: a block idle longer than a fixed TTL is
+    proactively evicted; under forced pressure, LRU.
 
-    Mechanism: keep KV resident through tool-call gaps by giving each block a
-    time-to-live; a block idle longer than its TTL is proactively expired to
-    keep the cache lean for concurrent sessions. Under forced pressure it falls
-    back to LRU. The paper derives TTL from reload cost and queueing delay;
-    this reimplementation uses a fixed TTL parameter, because the adaptive
-    derivation needs the live serving loop (queue state, reload timing) that
-    the offline simulator does not model. Fidelity: the idle-time / gap-
-    bridging mechanism is faithful; the adaptive-TTL derivation is simplified
-    to a constant, noted here so the authors can see exactly what differs."""
+    This is NOT Continuum / CacheTTL, and must never be labeled as such.
+    Continuum's mechanism is gap-aware PROTECTION: it keeps KV alive through
+    predicted tool-call gaps, assigning TTLs from workflow knowledge precisely
+    so the cache survives the idle windows a naive evictor would harvest. In
+    other words, naive idle-time eviction is Continuum's motivating
+    counterexample, not Continuum. A faithful Continuum is a hint-consuming
+    policy (it needs a predicted-next-turn signal) and lands as its own rung
+    once the hint interface is wired; see docs/policy-interface.md.
+
+    IdleTTL is included as a legitimate strawman: the mechanism lower bound
+    that quantifies how badly a pure idle-time signal misleads on this
+    workload. It confirms Continuum's premise; it does not test Continuum's
+    contribution."""
 
     def __init__(self, ttl_ms: float = 60_000.0):
         self.ttl_ms = ttl_ms
