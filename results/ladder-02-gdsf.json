@@ -1,0 +1,14 @@
+{
+  "note": "Ladder rung 2: GDSF (Cherkasova 1998), the first cost-consulting policy. Under the linear cost model it reduces to LFU-with-aging, so this row measures what the FREQUENCY signal alone collects of LRU's 60-point room over the oracle. Answer: negative, and the canonical version's reset-thrash mechanism was predicted and is confirmed by ablation.",
+  "date": "2026-07-21",
+  "config": {"sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_approx": 0.67,
+             "block_tokens": 256, "recompute_ms_per_token": 1.0, "interleave_gap_ms": 0},
+  "results": {
+    "LRU_floor":        {"percent_of_oracle": 160.5, "hit_pct": 91.7},
+    "GDSF_canonical":   {"percent_of_oracle": 203.2, "hit_pct": 90.5},
+    "GDSF_history":     {"percent_of_oracle": 180.5, "hit_pct": 91.1}
+  },
+  "reset_thrash_ablation": "Canonical GDSF resets frequency per-residency; the retained-history variant keeps it across residency gaps. On this workload the canonical reset costs ~23 points (203.2 -> 180.5). Mechanism, as predicted: agentic re-reads bring an evicted hot block straight back as a freq-1 stranger, making it the next cheapest victim (a self-reinforcing thrash loop for exactly the hot blocks). Retained history lets the block re-enter with standing, breaking the loop. The prediction was recorded in the GDSF docstring before the run; the ablation confirms it.",
+  "finding": "Even retained-history GDSF (180.5%) loses to LRU (160.5%): the frequency signal, with or without history, is worse than pure recency on agentic re-reads. Cumulative ladder result so far: no simple single-signal heuristic beats LRU. Recency 160.5% < idle-time (IdleTTL) 176.4% < frequency-with-history 180.5% < frequency-reset 203.2%. The 60 points of room over the oracle are collected by NONE of the classic heuristics; they make it worse. This sharpens the case that lifecycle/workflow information (WA-LRU, retired-cache, gap-aware protection, the economic policy) is what the room requires.",
+  "performance": "GDSF ran the high-pressure cell in 24.6s, under the ~29s budget; the per-eviction sort survives at 256 granularity, so the heap optimization is again declined (measured, not assumed)."
+}

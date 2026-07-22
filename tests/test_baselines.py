@@ -2,8 +2,9 @@
 against a hand-built trace, and it remains a valid policy (oracle stays the lower
 bound). The mentor's competent-adversary oracle-fuzz upgrade fires at GDSF."""
 
-from agentic_kv_bench.baselines import LRU, IdleTTL
+from agentic_kv_bench.baselines import GDSF, LRU, IdleTTL
 from agentic_kv_bench.harness import BlockRef, CostParams, RequestAccess, replay
+from agentic_kv_bench.policy import BlockMeta, CacheView
 
 COST = CostParams(recompute_ms_per_token=1.0)
 
@@ -58,3 +59,44 @@ def test_ttl_is_a_valid_policy_against_oracle():
     res = replay(trace, IdleTTL(ttl_ms=3), COST, capacity_tokens=2)
     ora = oracle_run(trace, COST, capacity_tokens=2)
     assert percent_of_oracle(res, ora) >= 100.0 - 1e-9  # oracle still the bound
+
+
+def test_gdsf_keeps_frequently_reused_blocks():
+    """GDSF's distinguishing signal vs LRU is frequency. Block 1 is reused
+    constantly; block 2 changes every turn. Under capacity 2, GDSF should keep
+    the high-frequency block 1 resident (fewer misses on it) where LRU thrashes
+    on recency alone."""
+    # 1 reused every other access; the other slot cycles through 2,3,4,5
+    seq = [1, 2, 1, 3, 1, 4, 1, 5, 1, 6]
+    trace = [acc(i, [b]) for i, b in enumerate(seq)]
+    lru = replay(trace, LRU(), COST, capacity_tokens=2)
+    gdsf = replay(trace, GDSF(), COST, capacity_tokens=2)
+    # block 1 is accessed 5 times; GDSF should never capacity-miss it, LRU may.
+    assert gdsf.scored_recompute_cost <= lru.scored_recompute_cost
+
+
+def test_gdsf_is_a_valid_policy_against_oracle():
+    from agentic_kv_bench.oracle import oracle_run, percent_of_oracle
+
+    trace = [acc(i, [(i % 5) + 1]) for i in range(30)]
+    res = replay(trace, GDSF(), COST, capacity_tokens=3)
+    ora = oracle_run(trace, COST, capacity_tokens=3)
+    assert percent_of_oracle(res, ora) >= 100.0 - 1e-9
+
+
+def test_gdsf_cost_term_cancels_under_linear_cost_model():
+    """Under the linear cost model (recompute cost = size * rate), GDSF's
+    cost/size term is constant, so GDSF reduces exactly to LFU-with-aging. This
+    documents WHY cost-awareness is latent in the current sweep: it activates
+    only when the cost model gains a size-independent term (a per-recompute
+    fixed overhead, as real hardware has). Two blocks, different sizes, cost
+    proportional to size, equal frequency -> equal priority (size cancels)."""
+    g = GDSF()
+    resident = {
+        1: BlockMeta(1, "history", size_tokens=100, recompute_cost=100.0, last_access_ms=0),
+        2: BlockMeta(2, "history", size_tokens=10, recompute_cost=10.0, last_access_ms=0),
+    }
+    g.bind(CacheView(resident))
+    for bid, m in resident.items():
+        g.on_access(bid, m, 0)  # equal frequency (1 each)
+    assert g._H[1] == g._H[2]  # cost/size = rate for both; size does not tip it

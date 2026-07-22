@@ -35,13 +35,12 @@ def test_belady_evicts_farthest_future_use():
 
 def test_oracle_is_a_lower_bound_under_uniform_cost():
     """Belady is provably optimal for uniform cost/size, so NO online policy
-    can pay less than the oracle. Fuzz several policies and assert
-    percent-of-oracle >= 100 every time.
-
-    TODO(baselines): add a COMPETENT policy (GDSF / WA-LRU) to the fuzz set
-    once the baseline ladder lands. A lower bound pressured only by LRU and
-    random is validated against strawmen; a strong policy is what could expose
-    a gap in the cost-aware-Belady heuristic under variable cost."""
+    can pay less than the oracle. Fuzz several policies, including a COMPETENT
+    one (GDSF), and assert percent-of-oracle >= 100 every time. GDSF is the
+    competent adversary the recorded note called for: a lower bound pressured
+    only by LRU and random is validated against strawmen; GDSF is a real
+    cost/frequency policy that could expose a gap in the bound if one existed."""
+    from agentic_kv_bench.baselines import GDSF
 
     class Random(Policy):
         def __init__(self, seed):
@@ -64,7 +63,7 @@ def test_oracle_is_a_lower_bound_under_uniform_cost():
         trace = [one(i, b) for i, b in enumerate(seq)]
         cap = 3
         ora = oracle_run(trace, COST, cap)
-        for policy in (LRU(), Random(seed)):
+        for policy in (LRU(), Random(seed), GDSF()):
             res = replay(trace, policy, COST, cap)
             pct = percent_of_oracle(res, ora)
             assert pct >= 100.0 - 1e-9, f"policy beat the oracle: {pct} (seed {seed})"
