@@ -31,12 +31,15 @@ def replay_via_port(
     capacity_tokens: int,
     hints: HintDelivery | None = None,
     high_value_threshold: float | None = None,
+    port_factory=SimPort,
 ) -> RunResult:
     """The simulator driven through the Port seam. Scoring identical to
-    harness.replay; the only difference is that admission/eviction go through
-    SimPort, which is what miniserve swaps for MiniservePort."""
+    harness.replay; the only difference is that admission/eviction go through the
+    Port. `port_factory` defaults to the reference SimPort; an integration test
+    injects miniserve's MiniservePort here (dependency injection, so the benchmark
+    never imports the engine) to run every policy on the real allocator."""
     hints = hints if hints is not None else _HINTS_ON
-    port = SimPort(capacity_tokens)
+    port = port_factory(capacity_tokens)
     port.bind_policy(policy)
     seen: set = set()
 
