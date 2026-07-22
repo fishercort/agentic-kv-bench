@@ -140,6 +140,13 @@ def replay(
         now = req.arrival_ms
         working = frozenset(b.block_id for b in req.blocks)
         view._set_protected(working)
+        # Proactive expiry (TTL-style), before admission. Never touches the
+        # current working set or a non-resident id.
+        for vid in policy.maintain(now):
+            if vid in resident and vid not in working:
+                m = resident.pop(vid)
+                resident_tokens -= m.size_tokens
+                evictions += 1
         if hints_enabled:
             for ev in req.lifecycle_events:
                 policy.on_hint(ev, now)

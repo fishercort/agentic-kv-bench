@@ -77,3 +77,10 @@ class Policy(ABC):
         """Tier for a newly admitted block. Default keeps everything on gpu;
         offloading policies return a cheaper tier."""
         return "gpu"
+
+    def maintain(self, now_ms: int) -> list:
+        """Proactive-eviction opportunity, called once per request before
+        admission. Return block_ids to evict now; default none. Time-based
+        policies (TTL) expire idle blocks here to keep the cache lean;
+        recency/cost policies leave it empty and only evict under pressure."""
+        return []

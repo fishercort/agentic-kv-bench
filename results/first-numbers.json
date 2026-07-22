@@ -9,19 +9,24 @@
     "high_pressure": {
       "sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_approx": 0.67,
       "policy": "LRU", "percent_of_oracle": 160.5, "lru_hit_rate_pct": 91.7,
-      "reading": "LRU pays 60% more than the offline optimum under real pressure; this is the headroom lifecycle-aware policies must convert into wins."
+      "reading": "LRU pays 60% more than the offline optimum: this is ROOM FOR POLICIES TO COMPETE OVER, not room for lifecycle policies to win. The ladder decides how much of that 60% the heuristic baselines (TTL, GDSF, WA-LRU) already capture without consulting a price or a hint; the economic policy competes for whatever remains. Worded carefully to avoid claiming the win before the ladder measures it."
     }
   },
   "granularity_sensitivity": {
-    "check": "same 2-session config at block_tokens 64 vs 256",
-    "percent_of_oracle": {"64": 100.0, "256": 100.0},
-    "lru_hit_rate_pct": {"64": 93.3, "256": 93.1},
-    "conclusion": "policy comparison is granularity-invariant; the sweep runs at 256 (EVAL_PLAN sweep grid)."
+    "low_pressure": {"check": "2 sessions, block_tokens 64 vs 256",
+      "percent_of_oracle": {"64": 100.0, "256": 100.0},
+      "lru_hit_rate_pct": {"64": 93.3, "256": 93.1}},
+    "high_pressure": {"check": "11 sessions (thrash), block_tokens 512/256/128",
+      "percent_of_oracle": {"512": 162.2, "256": 160.5, "128": 159.5},
+      "lru_hit_rate_pct": {"512": 91.5, "256": 91.7, "128": 91.8}},
+    "bias_characterization": "The high-pressure spread is monotone (coarser = worse), which trips the pre-set no-drift clause but is USED rather than waved: it is a monotone quantization bias of ~1.3pp per granularity doubling, direction as predicted (coarser blocks waste more of each eviction decision). Sweep granularity 256 sits ~1pp above the fine-grain asymptote by extrapolation. Consequence: cross-policy comparisons at a SHARED granularity are clean IF the bias is common-mode (assumed policy-independent, stated), but any absolute claim ('policy X within N% of optimal') inherits the ~1pp quantization pad, which the results section states once.",
+    "conclusion": "Policy-vs-oracle is granularity-invariant to ~2% across 4x in both regimes, with the high-pressure drift characterized as a known ~1pp correction term rather than noise. Sweep runs at 256 (EVAL_PLAN sweep grid)."
   },
   "performance_decision": {
     "first_order_lever": "block-granularity coarsening 64 -> 256 (a simulation parameter, not an engine constraint)",
     "result": "full 11-session interleave went from intractable at 64 to 28.8s at 256",
     "grid_arithmetic": "~29s/cell x ~144 cells = ~69 min for the full sweep",
-    "conclusion": "coarsening alone is sufficient; the heap-based O(resident) eviction optimization is NOT needed and is not being built. Cheap lever measured, expensive lever declined."
+    "conclusion": "coarsening alone is sufficient; the heap-based O(resident) eviction optimization is NOT needed and is not being built.",
+    "heap_work": "evaluated, skipped; coarsening sufficient; revisit only if the grid grows 10x or a policy's evict() becomes super-linear per call."
   }
 }
