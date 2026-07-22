@@ -40,7 +40,7 @@ def test_oracle_is_a_lower_bound_under_uniform_cost():
     competent adversary the recorded note called for: a lower bound pressured
     only by LRU and random is validated against strawmen; GDSF is a real
     cost/frequency policy that could expose a gap in the bound if one existed."""
-    from agentic_kv_bench.baselines import GDSF
+    from agentic_kv_bench.baselines import GDSF, GDSFHistory
 
     class Random(Policy):
         def __init__(self, seed):
@@ -63,7 +63,7 @@ def test_oracle_is_a_lower_bound_under_uniform_cost():
         trace = [one(i, b) for i, b in enumerate(seq)]
         cap = 3
         ora = oracle_run(trace, COST, cap)
-        for policy in (LRU(), Random(seed), GDSF()):
+        for policy in (LRU(), Random(seed), GDSF(), GDSFHistory()):
             res = replay(trace, policy, COST, cap)
             pct = percent_of_oracle(res, ora)
             assert pct >= 100.0 - 1e-9, f"policy beat the oracle: {pct} (seed {seed})"

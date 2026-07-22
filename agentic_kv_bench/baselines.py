@@ -107,6 +107,64 @@ class GDSFHistory(GDSF):
         return victims
 
 
+class WALRU(Policy):
+    """Workflow-Aware LRU (SAGA, arXiv 2605.00528).
+
+    Exact scoring rule (paper's Eq., eviction priority; evict the highest):
+
+        P_evict(b) = alpha * R_hat(b) + beta * (1 - P_reuse(b)) + gamma * S_hat(b)
+
+    where R_hat is normalized recency (age since last access), P_reuse is the
+    block's reuse probability, and S_hat is normalized size. A block that is
+    stale, unlikely to be reused, and large is the first to go.
+
+    Fidelity, at its highest bar because the authors may check, with two
+    disclosed gaps so they see exactly what differs:
+    1. P_reuse SOURCE: the paper derives it from the Agent Execution Graph
+       (workflow structure). This is the INFERENCE-ONLY version, estimating
+       P_reuse from normalized access frequency (no graph, no hints). The
+       faithful graph-driven WA-LRU is the hint-consuming rung and lands with
+       the hint interface; this row is its signal-blind lower bound.
+    2. WEIGHTS: alpha/beta/gamma are set to neutral defaults (1, 1, 0), not the
+       paper's tuned values (not extracted here); the sweep varies them. gamma
+       defaults to 0 because S_hat is vestigial under uniform block size (same
+       cancellation as GDSF's cost term).
+    The three-term RULE itself is faithful; the estimator and weights are the
+    named substitutions."""
+
+    def __init__(self, alpha: float = 1.0, beta: float = 1.0, gamma: float = 0.0):
+        self.alpha, self.beta, self.gamma = alpha, beta, gamma
+        self._freq: dict = {}
+
+    def on_access(self, block_id, meta, now_ms: int) -> None:
+        # P_reuse estimator: accumulated access frequency (retained across
+        # residency gaps, since P_reuse is meant to be a stable estimate, not a
+        # per-residency count; contrast GDSF's canonical reset).
+        self._freq[block_id] = self._freq.get(block_id, 0) + 1
+
+    def evict(self, needed_tokens: int, now_ms: int) -> list:
+        resident = self.cache.resident()
+        ages = {b: now_ms - m.last_access_ms for b, m in resident.items()}
+        max_age = max(ages.values()) or 1
+        max_freq = max((self._freq.get(b, 1) for b in resident), default=1) or 1
+        max_size = max((m.size_tokens for m in resident.values()), default=1) or 1
+
+        def p_evict(b: object) -> float:
+            r_hat = ages[b] / max_age
+            p_reuse = self._freq.get(b, 1) / max_freq
+            s_hat = resident[b].size_tokens / max_size
+            return self.alpha * r_hat + self.beta * (1 - p_reuse) + self.gamma * s_hat
+
+        by_priority = sorted(resident, key=p_evict, reverse=True)  # highest first
+        victims, freed = [], 0
+        for b in by_priority:
+            victims.append(b)
+            freed += resident[b].size_tokens
+            if freed >= needed_tokens:
+                break
+        return victims
+
+
 class IdleTTL(Policy):
     """NAIVE idle-time expiry: a block idle longer than a fixed TTL is
     proactively evicted; under forced pressure, LRU.

@@ -2,7 +2,7 @@
 against a hand-built trace, and it remains a valid policy (oracle stays the lower
 bound). The mentor's competent-adversary oracle-fuzz upgrade fires at GDSF."""
 
-from agentic_kv_bench.baselines import GDSF, LRU, IdleTTL
+from agentic_kv_bench.baselines import GDSF, LRU, WALRU, IdleTTL
 from agentic_kv_bench.harness import BlockRef, CostParams, RequestAccess, replay
 from agentic_kv_bench.policy import BlockMeta, CacheView
 
@@ -100,3 +100,38 @@ def test_gdsf_cost_term_cancels_under_linear_cost_model():
     for bid, m in resident.items():
         g.on_access(bid, m, 0)  # equal frequency (1 each)
     assert g._H[1] == g._H[2]  # cost/size = rate for both; size does not tip it
+
+
+def test_walru_reuse_term_flips_the_victim_away_from_lru():
+    """The reuse term makes WA-LRU diverge from pure recency, computed exactly.
+    Block 1 is the OLDEST (LRU would evict it) but the MOST reused; block 2 is
+    newer but rarely used. With alpha=beta=1, gamma=0, ages {1:100, 2:50}
+    (max 100), freq {1:10, 2:1} (max 10):
+        P_evict(1) = 100/100 + (1 - 10/10) = 1.0
+        P_evict(2) =  50/100 + (1 -  1/10) = 1.4
+    WA-LRU evicts 2 (higher priority), where LRU would evict 1 (oldest). The
+    reuse signal overrides recency, per the formula."""
+    w = WALRU(alpha=1.0, beta=1.0, gamma=0.0)
+    resident = {
+        1: BlockMeta(1, "history", size_tokens=1, recompute_cost=1.0, last_access_ms=0),
+        2: BlockMeta(2, "history", size_tokens=1, recompute_cost=1.0, last_access_ms=50),
+    }
+    w.bind(CacheView(resident))
+    for _ in range(10):
+        w.on_access(1, resident[1], 0)  # block 1 heavily reused
+    w.on_access(2, resident[2], 50)     # block 2 rarely used
+    victims = w.evict(needed_tokens=1, now_ms=100)
+    assert victims == [2]  # NOT [1], which pure LRU (oldest-first) would pick
+    # and confirm LRU really would pick the other one, so the divergence is real
+    lru = LRU()
+    lru.bind(CacheView(resident))
+    assert lru.evict(1, now_ms=100) == [1]
+
+
+def test_walru_is_a_valid_policy_against_oracle():
+    from agentic_kv_bench.oracle import oracle_run, percent_of_oracle
+
+    trace = [acc(i, [(i % 5) + 1]) for i in range(30)]
+    res = replay(trace, WALRU(), COST, capacity_tokens=3)
+    ora = oracle_run(trace, COST, capacity_tokens=3)
+    assert percent_of_oracle(res, ora) >= 100.0 - 1e-9

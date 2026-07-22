@@ -39,6 +39,28 @@ def load_policy(spec: str) -> type[Policy]:
     return cls
 
 
+def parse_policy_args(pairs) -> dict:
+    """Turn repeated --policy-arg NAME=VALUE into constructor kwargs, so a
+    parameterized policy (e.g. WA-LRU's alpha/beta/gamma) is configurable and
+    every swept row is reproducible from the exact command line. Values coerce
+    int -> float -> str, in that order, so '0', '0.5', and 'lru' all do the
+    right thing without the caller quoting types."""
+    kwargs: dict = {}
+    for pair in pairs or []:
+        if "=" not in pair:
+            raise SystemExit(f"--policy-arg must be NAME=VALUE, got {pair!r}")
+        name, _, raw = pair.partition("=")
+        for coerce in (int, float):
+            try:
+                kwargs[name] = coerce(raw)
+                break
+            except ValueError:
+                continue
+        else:
+            kwargs[name] = raw
+    return kwargs
+
+
 def iter_traces(corpus: pathlib.Path):
     """Yield (path, trace-dict) for every *.json in a corpus directory or a
     single file."""
@@ -97,12 +119,13 @@ def _check_capacity(merged, capacity_tokens: int) -> None:
 
 def cmd_run(args) -> None:
     policy_cls = load_policy(args.policy)
+    policy_kwargs = parse_policy_args(args.policy_arg)
     cost = CostParams(recompute_ms_per_token=args.recompute_ms_per_token)
     merged, n_sessions, deferred = _load_sessions(
         pathlib.Path(args.corpus), args.session_gap_ms, args.sim_block_tokens
     )
     _check_capacity(merged, args.capacity_tokens)
-    res = replay(merged, policy_cls(), cost, args.capacity_tokens,
+    res = replay(merged, policy_cls(**policy_kwargs), cost, args.capacity_tokens,
                  hints_enabled=not args.no_hints)
     ora = oracle_run(merged, cost, args.capacity_tokens)
     pct = percent_of_oracle(res, ora)
@@ -155,6 +178,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr = sub.add_parser("run", help="replay a policy against a corpus, report percent-of-oracle")
     add_run_args(pr)
     pr.add_argument("--policy", required=True, help="import path 'module:ClassName'")
+    pr.add_argument("--policy-arg", action="append", metavar="NAME=VALUE",
+                    help="constructor kwarg for a parameterized policy "
+                         "(repeatable), e.g. --policy-arg alpha=1 --policy-arg beta=0")
     pr.add_argument("--no-hints", action="store_true", help="run hints-off (degradation mode)")
     pr.set_defaults(func=cmd_run)
 

@@ -68,6 +68,36 @@ granularity decision below.
   the sweep runs (TBD — pinned and dated before the first full sweep).
 - Seeds: TBD — pinned and dated before the first full sweep
 
+### Weight sweep pre-registration (WA-LRU; pinned 2026-07-21, before the first weighted run)
+
+WA-LRU has tunable weights, so it is a tuning loop, and tuning loops are where
+blind evaluation quietly dies: sweeping alpha/beta/gamma and reporting the best
+cell is post-hoc selection unless it is labeled as the steelman it is. Structure,
+fixed now:
+
+- **Headline row = the neutral default (alpha=1, beta=1, gamma=0)**, reported as
+  the primary WA-LRU number. No tuning; the honest "what the rule does out of the
+  box under our estimator."
+- **Tuned row = the best cell of the sweep below, reported SEPARATELY and
+  labeled** "WA-LRU, weights tuned on this workload — SAGA's best case under our
+  frequency estimator." This is disclosed post-hoc selection. It is reported
+  because it is actually FAIRER to SAGA than the default alone: their tuned
+  weights could not be extracted from the paper, so the on-workload optimum is
+  the most generous signal-blind reading of their method we can give.
+- Both rows ship, both labeled, tuning disclosed in the results note.
+
+Grid (fixed before the first weighted run):
+- alpha = 1 (fixed): the score is an argmax over a linear combination, so only
+  the ratio alpha:beta matters; fixing alpha=1 and sweeping beta covers the space.
+- beta in {0, 0.25, 0.5, 1, 2, 4}: from recency-only (beta=0) to reuse-dominated
+  (beta=4). Note beta=0 is analytically identical to LRU (P_evict = alpha*R_hat,
+  evict-oldest), so it is a built-in degeneracy anchor: if the optimum lands at
+  beta=0, WA-LRU-tuned IS LRU and the reuse estimator added nothing.
+- gamma = 0 (fixed): under uniform block size every S_hat is equal, so the gamma
+  term adds the same constant to every resident block and cancels in the argmax.
+  It has no effect on ranking at uniform size and is swept only when variable
+  block size enters (not this workload). Stated, not silently dropped.
+
 ## Metrics
 
 Percent-of-oracle (headline), tokens recomputed, high-value hit rate, p95/p99

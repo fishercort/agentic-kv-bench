@@ -8,7 +8,7 @@ import json
 import pytest
 
 from agentic_kv_bench.access import access_from_source
-from agentic_kv_bench.cli import load_policy, main
+from agentic_kv_bench.cli import load_policy, main, parse_policy_args
 from agentic_kv_bench.convert import SubagentTrace
 
 
@@ -60,6 +60,19 @@ def test_load_policy_resolves_and_validates():
         load_policy("no_colon")
     with pytest.raises(SystemExit):
         load_policy("agentic_kv_bench.baselines:NotAPolicy")
+
+
+def test_parse_policy_args_coerces_and_constructs_walru():
+    # int -> float -> str coercion order, and the kwargs actually build the policy.
+    from agentic_kv_bench.baselines import WALRU
+
+    kw = parse_policy_args(["alpha=1", "beta=0.5", "gamma=0"])
+    assert kw == {"alpha": 1, "beta": 0.5, "gamma": 0}
+    assert isinstance(kw["alpha"], int) and isinstance(kw["beta"], float)
+    w = WALRU(**kw)
+    assert (w.alpha, w.beta, w.gamma) == (1, 0.5, 0)
+    with pytest.raises(SystemExit):
+        parse_policy_args(["no_equals"])
 
 
 def test_cli_convert_and_run_end_to_end(tmp_path, capsys):
