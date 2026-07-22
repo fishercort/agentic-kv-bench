@@ -24,12 +24,25 @@ def req(hash_ids, t=0.0, out=5):
 
 def test_adapter_reconstructs_block_access():
     trace = src([req([1, 2]), req([1, 2, 3])])
-    accesses = access_from_source(trace)
+    accesses = access_from_source(trace)  # no coarsening: 1 source block each
     assert [len(a.blocks) for a in accesses] == [2, 3]
-    assert accesses[1].blocks[2].block_id == "t#3"  # namespaced by session id
+    assert accesses[1].blocks[2].block_id == ("t", (3,))  # (session, constituents)
     assert all(b.size_tokens == 64 for a in accesses for b in a.blocks)
-    # block kinds match the converter's derivation (shared walk_source)
     assert accesses[0].blocks[0].kind == "history"
+
+
+def test_coarsening_regroups_blocks_and_preserves_reuse():
+    # 4 source blocks -> at 256 tokens (group of 4) they become one coarse block.
+    trace = src([req([1, 2, 3, 4]), req([1, 2, 3, 4])])
+    coarse = access_from_source(trace, sim_block_tokens=256)
+    assert [len(a.blocks) for a in coarse] == [1, 1]  # 4 source blocks -> 1 coarse
+    assert coarse[0].blocks[0].size_tokens == 256
+    # reuse preserved: the same region is the same coarse block id across requests
+    assert coarse[0].blocks[0].block_id == coarse[1].blocks[0].block_id
+    # deterministic content-identity (not process-random hash)
+    assert coarse[0].blocks[0].block_id == ("t", (1, 2, 3, 4))
+    with pytest.raises(ValueError, match="multiple"):
+        access_from_source(trace, sim_block_tokens=100)  # not a multiple of 64
 
 
 def test_adapter_defers_subagents():

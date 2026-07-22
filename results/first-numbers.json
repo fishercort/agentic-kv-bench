@@ -1,0 +1,27 @@
+{
+  "note": "First end-to-end percent-of-oracle numbers on real Claude Code traces (kv-cache-tester), 2026-07-21. The two regimes together are the honest frame for the eventual results table: the control shows the benchmark does not manufacture wins where theory says none; the pressure point shows the headroom lifecycle policies must earn.",
+  "regimes": {
+    "low_pressure_control": {
+      "sessions": 2, "capacity_tokens": 133235, "pressure_ratio_approx": 1.4,
+      "policy": "LRU", "percent_of_oracle": 100.5, "lru_hit_rate_pct": 95.4,
+      "reading": "LRU near-optimal, as the pre-registered eval predicts for the regime where policy should not matter (Scenario-5 property)."
+    },
+    "high_pressure": {
+      "sessions": 11, "capacity_tokens": 1229856, "pressure_ratio_approx": 0.67,
+      "policy": "LRU", "percent_of_oracle": 160.5, "lru_hit_rate_pct": 91.7,
+      "reading": "LRU pays 60% more than the offline optimum under real pressure; this is the headroom lifecycle-aware policies must convert into wins."
+    }
+  },
+  "granularity_sensitivity": {
+    "check": "same 2-session config at block_tokens 64 vs 256",
+    "percent_of_oracle": {"64": 100.0, "256": 100.0},
+    "lru_hit_rate_pct": {"64": 93.3, "256": 93.1},
+    "conclusion": "policy comparison is granularity-invariant; the sweep runs at 256 (EVAL_PLAN sweep grid)."
+  },
+  "performance_decision": {
+    "first_order_lever": "block-granularity coarsening 64 -> 256 (a simulation parameter, not an engine constraint)",
+    "result": "full 11-session interleave went from intractable at 64 to 28.8s at 256",
+    "grid_arithmetic": "~29s/cell x ~144 cells = ~69 min for the full sweep",
+    "conclusion": "coarsening alone is sufficient; the heap-based O(resident) eviction optimization is NOT needed and is not being built. Cheap lever measured, expensive lever declined."
+  }
+}

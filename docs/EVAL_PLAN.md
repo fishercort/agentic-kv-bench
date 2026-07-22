@@ -20,9 +20,24 @@ See `trace-schema.md` for the definitions.
 
 ## Sweep grid
 
-- Ephemeral fraction: 0.1 → 0.7  (grid points: TBD — pinned and dated before
-  the first full sweep)
-- Memory-pressure levels: TBD — pinned and dated before the first full sweep
+Pinned 2026-07-21 (the trigger: the first end-to-end percent-of-oracle exists,
+see results/control-lru-low-pressure.json). Pressure and session-count are
+expressed as RATIOS, not absolute tokens, so the grid survives the block-
+granularity decision below.
+
+- Memory pressure = cache capacity / combined working set of concurrent
+  sessions: {1.5, 1.0, 0.6, 0.3}. 1.5 is the low-pressure control regime (LRU
+  expected near-optimal, confirmed at 100.5% on real traces); 0.3 is heavy
+  pressure where lifecycle awareness should matter.
+- Concurrency = number of interleaved sessions: {2, 8, 32}. Combined with the
+  pressure ratio this sets the absolute capacity per cell.
+- Simulated block granularity: {256} tokens as the sweep default, with a
+  one-cell sensitivity check at {64, 256} confirming policy RANKINGS are
+  granularity-invariant (every policy faces the same quantization). Granularity
+  is a simulation parameter, not an engine constraint; coarsening from 64 to
+  256 cuts resident-block counts ~4x and is the first-order performance lever.
+- Ephemeral fraction: 0.1 → 0.7 in 0.15 steps (synthetic scenarios; realized
+  fraction reported per real trace, not targeted).
 - Cost profiles (model scale): the cost model is parametric, so the full policy
   comparison runs under multiple model-scale cost profiles without serving
   those models. **Anchored** (measured via the calibrate CLI on served

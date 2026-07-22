@@ -67,13 +67,13 @@ def cmd_convert(args) -> None:
     print(f"converted {converted} traces -> {out} ({skipped} subagent traces deferred)")
 
 
-def _load_sessions(corpus: pathlib.Path, gap_ms: int):
+def _load_sessions(corpus: pathlib.Path, gap_ms: int, sim_block_tokens: int):
     """Adapt every trace and interleave them onto one timeline (real
     cross-session pressure). Returns (merged accesses, n_sessions, n_deferred)."""
     sessions, deferred = [], 0
     for _path, trace in iter_traces(corpus):
         try:
-            sessions.append(access_from_source(trace))
+            sessions.append(access_from_source(trace, sim_block_tokens))
         except SubagentTrace:
             deferred += 1
     if not sessions:
@@ -99,7 +99,7 @@ def cmd_run(args) -> None:
     policy_cls = load_policy(args.policy)
     cost = CostParams(recompute_ms_per_token=args.recompute_ms_per_token)
     merged, n_sessions, deferred = _load_sessions(
-        pathlib.Path(args.corpus), args.session_gap_ms
+        pathlib.Path(args.corpus), args.session_gap_ms, args.sim_block_tokens
     )
     _check_capacity(merged, args.capacity_tokens)
     res = replay(merged, policy_cls(), cost, args.capacity_tokens,
@@ -123,7 +123,7 @@ def cmd_run(args) -> None:
 def cmd_oracle(args) -> None:
     cost = CostParams(recompute_ms_per_token=args.recompute_ms_per_token)
     merged, n_sessions, deferred = _load_sessions(
-        pathlib.Path(args.corpus), args.session_gap_ms
+        pathlib.Path(args.corpus), args.session_gap_ms, args.sim_block_tokens
     )
     _check_capacity(merged, args.capacity_tokens)
     ora = oracle_run(merged, cost, args.capacity_tokens)
@@ -149,6 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="cost model parameter, swept per the Phase 2 verdict")
         sp.add_argument("--session-gap-ms", type=int, default=1000,
                         help="v1 arrival overlay: stagger between session starts")
+        sp.add_argument("--sim-block-tokens", type=int, default=256,
+                        help="simulated block granularity (sweep default 256)")
 
     pr = sub.add_parser("run", help="replay a policy against a corpus, report percent-of-oracle")
     add_run_args(pr)

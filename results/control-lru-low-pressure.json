@@ -1,0 +1,22 @@
+{
+  "note": "The first end-to-end percent-of-oracle, and the honesty anchor of the whole sweep. LRU at low pressure lands near the offline optimum, exactly as the pre-registered eval predicts for the regime where policy should not matter (the Scenario-5 control property), confirmed on real Claude Code traces before the grid was pinned. When lifecycle policies later win under pressure, this number is the other half of the story: the benchmark does not manufacture wins where theory says there are none.",
+  "date": "2026-07-21",
+  "config": {
+    "sessions": ["s_0002 (kv-cache-tester)", "s_0700 (kv-cache-tester)"],
+    "n_requests": 79,
+    "interleave_gap_ms": 0,
+    "capacity_tokens": 133235,
+    "pressure_ratio_approx": 1.4,
+    "recompute_ms_per_token": 1.0,
+    "policy": "LRU (baseline floor)",
+    "block_tokens": 64
+  },
+  "result": {
+    "lru_hit_rate_pct": 95.4,
+    "lru_scored_recompute": 12672,
+    "oracle_scored_recompute": 12608,
+    "percent_of_oracle": 100.5,
+    "compute_time_s": 0.3
+  },
+  "caveat": "Low-pressure regime only. The interesting high-pressure, many-session regime hits the O(resident)-per-eviction scalability wall; the granularity coarsening (block_tokens 64 -> 256) is the first-order fix before the ladder runs."
+}
