@@ -105,6 +105,26 @@ def test_boundary_block_rehash_is_not_compaction():
     assert stats.n_compactions == 0
 
 
+def test_access_emits_retire_hint_naming_the_dead_blocks():
+    # The execution form resolves the compaction into a retire hint naming the
+    # concrete cache block_ids it killed (block 1 survives; 2,3,4,5 die).
+    from agentic_kv_bench.access import access_from_source
+
+    reqs = [
+        req([1, 2, 3, 4], t=0.0),
+        req([1, 2, 3, 4, 5], t=1.0),
+        req([1, 9, 9, 9], t=2.0),  # compaction at pos 1
+    ]
+    accesses = access_from_source(src(reqs))  # no coarsening -> group=1
+    retire = [e for a in accesses for e in a.lifecycle_events if e["event"] == "retire"]
+    assert len(retire) == 1
+    sid = "t_test"
+    assert set(retire[0]["block_ids"]) == {
+        (sid, (2,)), (sid, (3,)), (sid, (4,)), (sid, (5,))
+    }
+    assert retire[0]["at_ms"] == 2000  # the compacting request's arrival
+
+
 # -- Decision 3: subagents + robustness ----------------------------------------
 
 

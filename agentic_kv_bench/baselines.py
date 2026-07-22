@@ -165,6 +165,61 @@ class WALRU(Policy):
         return victims
 
 
+class RetiredCache(Policy):
+    """Retired-cache lifecycle eviction (arXiv 2605.06472). The designated
+    hint-interface consumer: workflow lifecycle signals mark blocks DEAD, and
+    the policy reclaims them proactively instead of waiting for recency to age
+    them out. On this corpus the lifecycle signal is the compaction retirement
+    hint (the framework compacted the prefix, so it knows exactly which KV it
+    dropped); in the paper it is the termination message. Same shape: the
+    message IS the hint.
+
+    This is the rung the whole ladder was built toward, because it is the first
+    policy that can see what recency and frequency provably cannot - which
+    blocks are dead vs merely old (the 'idle != dead' gap the IdleTTL and GDSF
+    rungs both ran into). Its value is exactly the retirement signal, so it is
+    the natural place to measure with-hints vs inference-only.
+
+    Graceful degradation, the contract that makes this a real interface: with
+    hints OFF (or fully dropped) no block is ever marked retired, so maintain()
+    is empty and evict() is pure LRU. RetiredCache-inference-only IS LRU, by
+    construction - the policy adds signal, never subtracts it. The with-hints
+    vs hints-off gap is therefore precisely what the retirement signal buys."""
+
+    def __init__(self):
+        self._retired: set = set()
+
+    def on_hint(self, event: dict, now_ms: int) -> None:
+        if event.get("event") == "retire":
+            self._retired.update(event.get("block_ids", ()))
+
+    def maintain(self, now_ms: int) -> list:
+        # Proactively reclaim retired blocks still resident. resident() already
+        # excludes the current working set, so a block needed now is never here.
+        return [b for b in self.cache.resident() if b in self._retired]
+
+    def evict(self, needed_tokens: int, now_ms: int) -> list:
+        resident = self.cache.resident()
+        victims, freed = [], 0
+        # Retired (dead) blocks first: evicting them is free, they never return.
+        for b in resident:
+            if b in self._retired:
+                victims.append(b)
+                freed += resident[b].size_tokens
+                if freed >= needed_tokens:
+                    return victims
+        # Then LRU among the living. (With hints off, _retired is empty and this
+        # is the only branch, so the policy is exactly LRU.)
+        for m in sorted(resident.values(), key=lambda m: m.last_access_ms):
+            if m.block_id in self._retired:
+                continue
+            victims.append(m.block_id)
+            freed += m.size_tokens
+            if freed >= needed_tokens:
+                break
+        return victims
+
+
 class IdleTTL(Policy):
     """NAIVE idle-time expiry: a block idle longer than a fixed TTL is
     proactively evicted; under forced pressure, LRU.

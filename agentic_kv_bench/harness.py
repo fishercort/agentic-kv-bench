@@ -12,9 +12,33 @@ Cost is consumed structurally per the Phase 2 verdict: recompute cost per token
 is a parameter (the v1 crossover was degenerate), swept by the caller.
 """
 
+import random
 from dataclasses import dataclass, field
 
 from agentic_kv_bench.policy import BlockMeta, CacheView, Policy
+
+
+@dataclass(frozen=True)
+class HintDelivery:
+    """How lifecycle hints reach the policy this run: the degradation switches
+    (docs/hint-interface.md) that make the hint interface a robustness CURVE
+    rather than an on/off demo. The four positions the spec names:
+
+        on       HintDelivery()                     enabled, no delay, no drop
+        off      HintDelivery(enabled=False)        policy sees no hints
+        delayed  HintDelivery(delay_ms=N)           each hint arrives N ms late
+        dropped  HintDelivery(drop_prob=p, seed=s)  each hint lost w.p. p
+
+    Delay and drop compose (a channel can be both late and lossy). Drop is
+    seeded so a lossy run is reproducible, same discipline as the oracle fuzz."""
+
+    enabled: bool = True
+    delay_ms: int = 0
+    drop_prob: float = 0.0
+    seed: int = 0
+
+
+_HINTS_ON = HintDelivery()
 
 
 @dataclass(frozen=True)
@@ -90,18 +114,43 @@ class RunResult:
         return self.hits / self.total_accesses if self.total_accesses else 0.0
 
 
+def _build_hint_schedule(
+    accesses: list[RequestAccess], hints: HintDelivery
+) -> list[tuple[int, dict]]:
+    """Flatten every request's lifecycle events into a delivery-time-ordered
+    schedule, applying the degradation switches: drop with probability p
+    (seeded), shift delivery by delay_ms. An event's delivery time is its own
+    at_ms (when it happened) plus the delay; the harness delivers it the first
+    time the replay clock reaches that time (see replay). Off -> empty schedule."""
+    if not hints.enabled:
+        return []
+    rng = random.Random(hints.seed)
+    schedule: list[tuple[int, dict]] = []
+    for req in accesses:
+        for ev in req.lifecycle_events:
+            if hints.drop_prob and rng.random() < hints.drop_prob:
+                continue  # hint lost in transit
+            at = ev.get("at_ms", req.arrival_ms)
+            schedule.append((at + hints.delay_ms, ev))
+    schedule.sort(key=lambda x: x[0])  # stable: ties keep emission order
+    return schedule
+
+
 def replay(
     accesses: list[RequestAccess],
     policy: Policy,
     cost: CostParams,
     capacity_tokens: int,
-    hints_enabled: bool = True,
+    hints: HintDelivery | None = None,
     high_value_threshold: float | None = None,
 ) -> RunResult:
+    hints = hints if hints is not None else _HINTS_ON
     resident: dict[int, BlockMeta] = {}
     view = CacheView(resident)
     policy.bind(view)
     seen: set[int] = set()
+    schedule = _build_hint_schedule(accesses, hints)
+    hp = 0  # pointer into schedule; hints deliver as the clock passes them
 
     hits = compulsory = capacity = evictions = hv_capacity = 0
     scored_cost = 0.0
@@ -140,16 +189,20 @@ def replay(
         now = req.arrival_ms
         working = frozenset(b.block_id for b in req.blocks)
         view._set_protected(working)
-        # Proactive expiry (TTL-style), before admission. Never touches the
-        # current working set or a non-resident id.
+        # Deliver every hint whose (possibly delayed) delivery time has arrived,
+        # BEFORE maintain(), so a lifecycle policy can reclaim freshly-retired
+        # blocks in the same step. now_ms is the delivery time (when the policy
+        # observes it), which may be earlier than this request under delay=0.
+        while hp < len(schedule) and schedule[hp][0] <= now:
+            policy.on_hint(schedule[hp][1], schedule[hp][0])
+            hp += 1
+        # Proactive expiry (TTL-style / lifecycle reclamation), before admission.
+        # Never touches the current working set or a non-resident id.
         for vid in policy.maintain(now):
             if vid in resident and vid not in working:
                 m = resident.pop(vid)
                 resident_tokens -= m.size_tokens
                 evictions += 1
-        if hints_enabled:
-            for ev in req.lifecycle_events:
-                policy.on_hint(ev, now)
         for bref in req.blocks:
             m = resident.get(bref.block_id)
             if m is not None:  # hit
@@ -186,6 +239,13 @@ def replay(
             resident_tokens += bref.size_tokens
             policy.on_access(bref.block_id, meta, now)
             peak = max(peak, resident_tokens)
+
+    # Drain hints whose delivery time falls after the last request. No accesses
+    # follow, so they cannot change scoring; delivered for contract completeness
+    # (a delayed hint is still observed, just too late to matter).
+    while hp < len(schedule):
+        policy.on_hint(schedule[hp][1], schedule[hp][0])
+        hp += 1
 
     return RunResult(
         total_accesses=hits + compulsory + capacity,

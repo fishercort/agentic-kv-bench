@@ -8,6 +8,7 @@ from agentic_kv_bench.baselines import LRU
 from agentic_kv_bench.harness import (
     BlockRef,
     CostParams,
+    HintDelivery,
     RequestAccess,
     replay,
 )
@@ -125,3 +126,63 @@ def test_hints_reach_hint_consuming_policies():
     ]
     replay(trace, HintWatcher(), COST, capacity_tokens=100)
     assert seen_events == ["compaction"]
+
+
+# -- hint degradation switches: on / off / delayed / dropped -------------------
+
+
+class HintSpy(LRU):
+    """Records (event_type, delivery_now_ms) for every hint it observes."""
+
+    def __init__(self):
+        self.seen = []
+
+    def on_hint(self, event, now_ms):
+        self.seen.append((event["event"], now_ms))
+
+
+def _retire_trace():
+    # a retire hint stamped at t=0, then requests at t=0, 10, 20
+    ev = [{"event": "retire", "at_ms": 0, "block_ids": [1]}]
+    return [acc(0, [1], events=ev), acc(10, [2]), acc(20, [3])]
+
+
+def test_hints_on_deliver_at_event_time():
+    spy = HintSpy()
+    replay(_retire_trace(), spy, COST, 100, hints=HintDelivery())
+    assert spy.seen == [("retire", 0)]
+
+
+def test_hints_off_deliver_nothing():
+    spy = HintSpy()
+    replay(_retire_trace(), spy, COST, 100, hints=HintDelivery(enabled=False))
+    assert spy.seen == []
+
+
+def test_hints_delayed_arrive_at_the_first_request_past_the_delay():
+    # delay 15ms: the t=0 hint's delivery time is 15, first observed when the
+    # clock reaches it at the t=20 request, NOT at t=0 or t=10. now_ms is 15.
+    spy = HintSpy()
+    replay(_retire_trace(), spy, COST, 100, hints=HintDelivery(delay_ms=15))
+    assert spy.seen == [("retire", 15)]
+
+
+def test_hints_dropped_at_p1_and_kept_at_p0():
+    dropped = HintSpy()
+    replay(_retire_trace(), dropped, COST, 100, hints=HintDelivery(drop_prob=1.0))
+    assert dropped.seen == []
+    kept = HintSpy()
+    replay(_retire_trace(), kept, COST, 100, hints=HintDelivery(drop_prob=0.0))
+    assert kept.seen == [("retire", 0)]
+
+
+def test_hints_partial_drop_is_seeded_and_reproducible():
+    trace = [
+        acc(i, [i], events=[{"event": "retire", "at_ms": i, "block_ids": [i]}])
+        for i in range(30)
+    ]
+    a, b = HintSpy(), HintSpy()
+    replay(trace, a, COST, 100, hints=HintDelivery(drop_prob=0.5, seed=7))
+    replay(trace, b, COST, 100, hints=HintDelivery(drop_prob=0.5, seed=7))
+    assert a.seen == b.seen  # same seed -> identical drop pattern
+    assert 0 < len(a.seen) < 30  # some dropped, some survived

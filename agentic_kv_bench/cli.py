@@ -18,7 +18,7 @@ import sys
 
 from agentic_kv_bench.access import access_from_source
 from agentic_kv_bench.convert import SubagentTrace, convert_trace
-from agentic_kv_bench.harness import CostParams, interleave, replay
+from agentic_kv_bench.harness import CostParams, HintDelivery, interleave, replay
 from agentic_kv_bench.oracle import oracle_run, percent_of_oracle
 from agentic_kv_bench.policy import Policy
 
@@ -117,16 +117,36 @@ def _check_capacity(merged, capacity_tokens: int) -> None:
         )
 
 
+def _hint_delivery(args) -> tuple[HintDelivery, str]:
+    """Build the hint-degradation config from the run flags, and a short label
+    for the run header. The switch positions (docs/hint-interface.md): default
+    is on; --no-hints is off; --hint-delay-ms and --hint-drop-prob degrade the
+    channel and compose."""
+    if args.no_hints:
+        return HintDelivery(enabled=False), "off"
+    hints = HintDelivery(
+        enabled=True, delay_ms=args.hint_delay_ms,
+        drop_prob=args.hint_drop_prob, seed=args.hint_seed,
+    )
+    parts = []
+    if args.hint_delay_ms:
+        parts.append(f"delayed {args.hint_delay_ms}ms")
+    if args.hint_drop_prob:
+        parts.append(f"dropped p={args.hint_drop_prob} (seed {args.hint_seed})")
+    return hints, ", ".join(parts) if parts else "on"
+
+
 def cmd_run(args) -> None:
     policy_cls = load_policy(args.policy)
     policy_kwargs = parse_policy_args(args.policy_arg)
     cost = CostParams(recompute_ms_per_token=args.recompute_ms_per_token)
+    hints, hint_label = _hint_delivery(args)
     merged, n_sessions, deferred = _load_sessions(
         pathlib.Path(args.corpus), args.session_gap_ms, args.sim_block_tokens
     )
     _check_capacity(merged, args.capacity_tokens)
     res = replay(merged, policy_cls(**policy_kwargs), cost, args.capacity_tokens,
-                 hints_enabled=not args.no_hints)
+                 hints=hints)
     ora = oracle_run(merged, cost, args.capacity_tokens)
     pct = percent_of_oracle(res, ora)
     pct_s = "inf" if pct == float("inf") else f"{pct:.1f}"
@@ -135,7 +155,7 @@ def cmd_run(args) -> None:
           f"(gap {args.session_gap_ms} ms), {deferred} deferred")
     print(f"capacity: {args.capacity_tokens} tokens   "
           f"recompute: {args.recompute_ms_per_token} ms/tok   "
-          f"hints: {'off' if args.no_hints else 'on'}")
+          f"hints: {hint_label}")
     print(f"hit rate:            {100 * res.hit_rate:.1f}%")
     print(f"scored recompute:    {res.scored_recompute_cost:.1f} "
           f"({res.scored_recompute_tokens} tokens, {res.n_evictions} evictions)")
@@ -181,7 +201,14 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--policy-arg", action="append", metavar="NAME=VALUE",
                     help="constructor kwarg for a parameterized policy "
                          "(repeatable), e.g. --policy-arg alpha=1 --policy-arg beta=0")
-    pr.add_argument("--no-hints", action="store_true", help="run hints-off (degradation mode)")
+    pr.add_argument("--no-hints", action="store_true",
+                    help="hints off: the inference-only degradation position")
+    pr.add_argument("--hint-delay-ms", type=int, default=0,
+                    help="hint degradation: deliver each lifecycle hint N ms late")
+    pr.add_argument("--hint-drop-prob", type=float, default=0.0,
+                    help="hint degradation: drop each hint with probability p")
+    pr.add_argument("--hint-seed", type=int, default=0,
+                    help="seed for the (reproducible) hint-drop channel")
     pr.set_defaults(func=cmd_run)
 
     po = sub.add_parser("oracle", help="report the oracle's cost for each trace")

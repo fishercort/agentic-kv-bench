@@ -2,17 +2,24 @@
 against a hand-built trace, and it remains a valid policy (oracle stays the lower
 bound). The mentor's competent-adversary oracle-fuzz upgrade fires at GDSF."""
 
-from agentic_kv_bench.baselines import GDSF, LRU, WALRU, IdleTTL
-from agentic_kv_bench.harness import BlockRef, CostParams, RequestAccess, replay
+from agentic_kv_bench.baselines import GDSF, LRU, WALRU, IdleTTL, RetiredCache
+from agentic_kv_bench.harness import (
+    BlockRef,
+    CostParams,
+    HintDelivery,
+    RequestAccess,
+    replay,
+)
 from agentic_kv_bench.policy import BlockMeta, CacheView
 
 COST = CostParams(recompute_ms_per_token=1.0)
 
 
-def acc(ms, block_ids, tokens=1):
+def acc(ms, block_ids, tokens=1, events=None):
     return RequestAccess(
         arrival_ms=ms,
         blocks=[BlockRef(block_id=b, kind="history", size_tokens=tokens) for b in block_ids],
+        lifecycle_events=events or [],
     )
 
 
@@ -133,5 +140,55 @@ def test_walru_is_a_valid_policy_against_oracle():
 
     trace = [acc(i, [(i % 5) + 1]) for i in range(30)]
     res = replay(trace, WALRU(), COST, capacity_tokens=3)
+    ora = oracle_run(trace, COST, capacity_tokens=3)
+    assert percent_of_oracle(res, ora) >= 100.0 - 1e-9
+
+
+def _dead_over_old_trace():
+    # Block 1 is older but LIVE (reused at the end); block 2 is newer but DEAD
+    # (retired at t=2, never used again). Capacity 2 forces one out when 3 arrives.
+    return [
+        acc(0, [1]),
+        acc(1, [2]),
+        acc(2, [3], events=[{"event": "retire", "at_ms": 2, "block_ids": [2]}]),
+        acc(3, [1]),
+    ]
+
+
+def test_retired_cache_evicts_dead_over_old_where_lru_pays():
+    """RetiredCache's distinguishing mechanism: it evicts a DEAD-but-recent block
+    where LRU evicts a LIVE-but-old one. This is the 'dead != old' signal recency
+    and frequency provably cannot see (the IdleTTL and GDSF rungs both hit it)."""
+    trace = _dead_over_old_trace()
+    lru = replay(trace, LRU(), COST, capacity_tokens=2)
+    rc = replay(trace, RetiredCache(), COST, capacity_tokens=2)
+    assert lru.capacity_misses == 1  # LRU drops old-but-live 1, recomputes it
+    assert rc.capacity_misses == 0   # RetiredCache drops dead 2, keeps live 1
+
+
+def test_retired_cache_degrades_to_lru_with_hints_off():
+    """The graceful-degradation contract: no hints -> _retired stays empty ->
+    RetiredCache IS LRU. The policy adds signal, never subtracts it."""
+    trace = [acc(i, [(i % 3) + 1]) for i in range(6)]
+    off = HintDelivery(enabled=False)
+    lru = replay(trace, LRU(), COST, capacity_tokens=2)
+    rc = replay(trace, RetiredCache(), COST, capacity_tokens=2, hints=off)
+    assert rc.scored_recompute_cost == lru.scored_recompute_cost
+    assert rc.n_evictions == lru.n_evictions
+
+
+def test_retired_cache_with_dropped_hint_matches_lru_cost():
+    """Ties the degradation switch to the outcome: drop the retire hint and
+    RetiredCache pays LRU's cost, because it never learns block 2 is dead."""
+    trace = _dead_over_old_trace()
+    dropped = replay(trace, RetiredCache(), COST, 2, hints=HintDelivery(drop_prob=1.0))
+    assert dropped.capacity_misses == 1  # no hint -> behaves as LRU
+
+
+def test_retired_cache_is_a_valid_policy_against_oracle():
+    from agentic_kv_bench.oracle import oracle_run, percent_of_oracle
+
+    trace = [acc(i, [(i % 5) + 1]) for i in range(30)]
+    res = replay(trace, RetiredCache(), COST, capacity_tokens=3)
     ora = oracle_run(trace, COST, capacity_tokens=3)
     assert percent_of_oracle(res, ora) >= 100.0 - 1e-9
