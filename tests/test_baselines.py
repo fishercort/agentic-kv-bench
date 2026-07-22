@@ -2,7 +2,14 @@
 against a hand-built trace, and it remains a valid policy (oracle stays the lower
 bound). The mentor's competent-adversary oracle-fuzz upgrade fires at GDSF."""
 
-from agentic_kv_bench.baselines import GDSF, LRU, WALRU, IdleTTL, RetiredCache
+from agentic_kv_bench.baselines import (
+    GDSF,
+    LRU,
+    WALRU,
+    EconomicJoint,
+    IdleTTL,
+    RetiredCache,
+)
 from agentic_kv_bench.harness import (
     BlockRef,
     CostParams,
@@ -192,3 +199,58 @@ def test_retired_cache_is_a_valid_policy_against_oracle():
     res = replay(trace, RetiredCache(), COST, capacity_tokens=3)
     ora = oracle_run(trace, COST, capacity_tokens=3)
     assert percent_of_oracle(res, ora) >= 100.0 - 1e-9
+
+
+def test_economic_joint_reduces_to_retired_cache_under_uniform_cost():
+    """The parity check, at unit scale: under uniform cost the pricing term is
+    inert, so EconomicJoint must make byte-for-byte the same decisions as
+    RetiredCache (dead-first + LRU). Run both on a trace with pressure AND a
+    retirement hint; assert identical scoring."""
+    trace = _dead_over_old_trace()  # has a retire hint and forces one eviction
+    econ = replay(trace, EconomicJoint(), COST, capacity_tokens=2)
+    rc = replay(trace, RetiredCache(), COST, capacity_tokens=2)
+    assert econ.scored_recompute_cost == rc.scored_recompute_cost
+    assert econ.capacity_misses == rc.capacity_misses == 0
+    # and a churnier trace, still uniform cost -> still identical to RetiredCache
+    churny = [acc(i, [(i % 4) + 1]) for i in range(24)]
+    e2 = replay(churny, EconomicJoint(), COST, capacity_tokens=2)
+    r2 = replay(churny, RetiredCache(), COST, capacity_tokens=2)
+    assert e2.scored_recompute_cost == r2.scored_recompute_cost
+
+
+def test_economic_joint_prices_and_keeps_the_expensive_block():
+    """Under per-kind cost the pricing term flips the victim. Two living blocks,
+    capacity 1 free needed: block E is expensive (cost 10) and older; block C is
+    cheap (cost 1) and newer. price = cost/(age+1):
+        E: 10/(100+1) = 0.099   C: 1/(10+1) = 0.091
+    EconomicJoint evicts C (cheaper to lose), KEEPING the expensive E, where LRU
+    would evict E (older). Pricing protects the costly-to-rebuild block."""
+    econ = EconomicJoint()
+    resident = {
+        "E": BlockMeta("E", "reasoning", size_tokens=1, recompute_cost=10.0, last_access_ms=0),
+        "C": BlockMeta("C", "tool_output", size_tokens=1, recompute_cost=1.0, last_access_ms=90),
+    }
+    econ.bind(CacheView(resident))
+    victims = econ.evict(needed_tokens=1, now_ms=100)
+    assert victims == ["C"]  # keep expensive E; LRU (oldest-first) would take E
+    lru = LRU()
+    lru.bind(CacheView(resident))
+    assert lru.evict(1, now_ms=100) == ["E"]
+
+
+def test_economic_joint_is_a_valid_policy_against_oracle_per_kind_cost():
+    from agentic_kv_bench.oracle import oracle_run, percent_of_oracle
+
+    cost = CostParams(recompute_ms_per_token=1.0,
+                      kind_cost_multiplier={"tool_output": 0.2, "reasoning": 1.0})
+    trace = [
+        RequestAccess(arrival_ms=i, blocks=[BlockRef(
+            block_id=(i % 5) + 1, kind=("tool_output" if i % 2 else "reasoning"),
+            size_tokens=1)])
+        for i in range(30)
+    ]
+    res = replay(trace, EconomicJoint(), cost, capacity_tokens=3)
+    ora = oracle_run(trace, cost, capacity_tokens=3)
+    # oracle is a strong approximation under heterogeneous cost, not a proven
+    # optimum, so allow a small tolerance rather than a hard lower bound.
+    assert percent_of_oracle(res, ora) >= 95.0

@@ -139,7 +139,9 @@ def _hint_delivery(args) -> tuple[HintDelivery, str]:
 def cmd_run(args) -> None:
     policy_cls = load_policy(args.policy)
     policy_kwargs = parse_policy_args(args.policy_arg)
-    cost = CostParams(recompute_ms_per_token=args.recompute_ms_per_token)
+    kind_cost = parse_policy_args(args.kind_cost) or None
+    cost = CostParams(recompute_ms_per_token=args.recompute_ms_per_token,
+                      kind_cost_multiplier=kind_cost)
     hints, hint_label = _hint_delivery(args)
     merged, n_sessions, deferred = _load_sessions(
         pathlib.Path(args.corpus), args.session_gap_ms, args.sim_block_tokens
@@ -164,7 +166,9 @@ def cmd_run(args) -> None:
 
 
 def cmd_oracle(args) -> None:
-    cost = CostParams(recompute_ms_per_token=args.recompute_ms_per_token)
+    kind_cost = parse_policy_args(args.kind_cost) or None
+    cost = CostParams(recompute_ms_per_token=args.recompute_ms_per_token,
+                      kind_cost_multiplier=kind_cost)
     merged, n_sessions, deferred = _load_sessions(
         pathlib.Path(args.corpus), args.session_gap_ms, args.sim_block_tokens
     )
@@ -194,6 +198,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="v1 arrival overlay: stagger between session starts")
         sp.add_argument("--sim-block-tokens", type=int, default=256,
                         help="simulated block granularity (sweep default 256)")
+        sp.add_argument("--kind-cost", action="append", metavar="KIND=MULT",
+                        help="per-kind recompute-cost multiplier (repeatable), e.g. "
+                             "--kind-cost tool_output=0.2 --kind-cost reasoning=1.0; "
+                             "omitted => uniform cost")
 
     pr = sub.add_parser("run", help="replay a policy against a corpus, report percent-of-oracle")
     add_run_args(pr)

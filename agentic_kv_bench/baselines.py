@@ -220,6 +220,66 @@ class RetiredCache(Policy):
         return victims
 
 
+class EconomicJoint(Policy):
+    """The contender: the economic joint policy (docs/policy-interface.md). Every
+    published baseline answers 'which block do I drop?'; this one prices the drop.
+    It scores each resident block by the expected recompute cost of losing it and
+    evicts the cheapest-to-lose first:
+
+        price(b) = 0                              if b is retired (dead, P_reuse=0)
+                 = recompute_cost(b) / (age + 1)  otherwise
+
+    where age = now - last_access. This is the JOINT policy: it consults all
+    three signals at once - lifecycle (retired => price 0, evict dead first),
+    cost (recompute_cost, so expensive-to-rebuild blocks are protected), and
+    reuse (recency via 1/age, the estimator the WA-LRU rung showed is the useful
+    subordinate correction). No single baseline uses all three.
+
+    Parity by construction: under UNIFORM cost every block's recompute_cost is
+    identical, so price collapses to a constant/age and the ranking is pure
+    recency, with retired blocks first - exactly RetiredCache (dead-first + LRU).
+    The uniform-cost panel is therefore a parity CHECK on the implementation: if
+    it does not reproduce RetiredCache's curve, the lifecycle/recency wiring is
+    wrong. Only under per-kind (heterogeneous) cost does the pricing term move
+    the ranking, which is the cost-swept panel where pricing earns its keep or
+    does not.
+
+    Scope: the paper's four-way decision is evict / offload / recompute-later /
+    refuse. Offload and refuse need measured migrate costs and tier-aware scoring
+    (Phase 4); this rung prices the eviction decision only and defers the other
+    two, stated not hidden. With hints off it degrades to cost-weighted recency
+    (and to plain LRU under uniform cost), never below the floor by construction."""
+
+    def __init__(self):
+        self._retired: set = set()
+
+    def on_hint(self, event: dict, now_ms: int) -> None:
+        if event.get("event") == "retire":
+            self._retired.update(event.get("block_ids", ()))
+
+    def maintain(self, now_ms: int) -> list:
+        return [b for b in self.cache.resident() if b in self._retired]
+
+    def evict(self, needed_tokens: int, now_ms: int) -> list:
+        resident = self.cache.resident()
+
+        def price(b: object):
+            m = resident[b]
+            if b in self._retired:
+                return (0.0, m.last_access_ms)  # dead: free to lose, evict first
+            age = now_ms - m.last_access_ms + 1
+            return (m.recompute_cost / age, m.last_access_ms)
+
+        order = sorted(resident, key=price)  # cheapest-to-lose first
+        victims, freed = [], 0
+        for b in order:
+            victims.append(b)
+            freed += resident[b].size_tokens
+            if freed >= needed_tokens:
+                break
+        return victims
+
+
 class IdleTTL(Policy):
     """NAIVE idle-time expiry: a block idle longer than a fixed TTL is
     proactively evicted; under forced pressure, LRU.

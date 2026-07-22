@@ -55,7 +55,7 @@ def oracle_run(
             if bref.block_id in resident:
                 hits += 1
                 continue
-            rc = cost.recompute_cost(bref.size_tokens)
+            rc = cost.recompute_cost(bref.size_tokens, bref.kind)
             if bref.block_id not in seen:
                 compulsory += 1
                 seen.add(bref.block_id)
