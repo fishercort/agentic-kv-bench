@@ -10,6 +10,11 @@ dependencies = ["kv-policy-core"]
 [tool.uv.sources]
 kv-policy-core = { path = "../kv-policy-core", editable = true }
 
+[project.optional-dependencies]
+# box-only runtime deps for the vLLM leg (subscribe.py, drive.py). Installed on the
+# rented GPU box with `uv sync --extra box`; not needed for the local test suite.
+box = ["pyzmq>=25", "msgspec>=0.18", "httpx>=0.27"]
+
 [project.scripts]
 agentic-kv-bench = "agentic_kv_bench.cli:main"
 
