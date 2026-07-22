@@ -19,7 +19,7 @@ from agentic_kv_bench.policy import BlockMeta, CacheView, Policy
 
 @dataclass(frozen=True)
 class BlockRef:
-    block_id: int
+    block_id: object  # any hashable, opaque to the harness; sessions namespace it
     kind: str
     size_tokens: int
 
@@ -29,6 +29,33 @@ class RequestAccess:
     arrival_ms: int
     blocks: list[BlockRef]  # the prefix this request accesses, in order
     lifecycle_events: list[dict] = field(default_factory=list)
+
+
+def interleave(
+    sessions: list[list[RequestAccess]], gap_ms: int = 1000
+) -> list[RequestAccess]:
+    """Stitch multiple sessions onto one timeline so they compete for the cache.
+
+    A single conversation never evicts (its own prefix fits); the benchmark's
+    memory pressure is many concurrent sessions. v1 overlay: session k starts at
+    k * gap_ms and its internal arrival times shift by that offset. This is the
+    deterministic stand-in for the Poisson / Azure-calibrated arrival process
+    that trace-schema.md specifies as the calibrated refinement. Block ids must
+    already be namespaced per session (see access.access_from_source).
+    """
+    merged: list[RequestAccess] = []
+    for k, session in enumerate(sessions):
+        offset = k * gap_ms
+        for req in session:
+            merged.append(
+                RequestAccess(
+                    arrival_ms=req.arrival_ms + offset,
+                    blocks=req.blocks,
+                    lifecycle_events=req.lifecycle_events,
+                )
+            )
+    merged.sort(key=lambda r: r.arrival_ms)
+    return merged
 
 
 @dataclass

@@ -36,7 +36,12 @@ def test_belady_evicts_farthest_future_use():
 def test_oracle_is_a_lower_bound_under_uniform_cost():
     """Belady is provably optimal for uniform cost/size, so NO online policy
     can pay less than the oracle. Fuzz several policies and assert
-    percent-of-oracle >= 100 every time."""
+    percent-of-oracle >= 100 every time.
+
+    TODO(baselines): add a COMPETENT policy (GDSF / WA-LRU) to the fuzz set
+    once the baseline ladder lands. A lower bound pressured only by LRU and
+    random is validated against strawmen; a strong policy is what could expose
+    a gap in the cost-aware-Belady heuristic under variable cost."""
 
     class Random(Policy):
         def __init__(self, seed):
