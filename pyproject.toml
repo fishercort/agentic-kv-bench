@@ -5,7 +5,10 @@ description = "A benchmark for KV cache eviction/placement policies under agenti
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-dependencies = []
+dependencies = ["kv-policy-core"]
+
+[tool.uv.sources]
+kv-policy-core = { path = "../kv-policy-core", editable = true }
 
 [project.scripts]
 agentic-kv-bench = "agentic_kv_bench.cli:main"
@@ -21,7 +24,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["agentic_kv_bench", "kv_policy_core"]
+packages = ["agentic_kv_bench"]
 
 [tool.ruff]
 line-length = 100

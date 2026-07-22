@@ -1,16 +1,16 @@
-"""SimPort and the Port-driven simulator.
+"""The Port-driven simulator (scored).
 
-`SimPort` implements the neutral `Port` seam (kv_policy_core) over the simulator's
-resident set. `replay_via_port` is the simulator driven entirely through that seam:
-same scoring as `harness.replay`, but every admission and eviction goes through the
-Port. In step 2 the same `replay_via_port` runs with a `MiniservePort` over the real
-block pool, and the parity harness (`assert_parity`) asserts the two agree — that is
-the offline/online-parity check the whole thesis rests on.
-
-For step 1 there is one Port (SimPort), so the parity harness compares
-`replay_via_port` against the reference `harness.replay`: if the Port-driven path
-reproduces the reference exactly on the traces, the seam is faithful.
+`SimPort` is the reference Port and lives in `kv_policy_core` (the neutral package),
+so an engine's conformance test can compare its own Port against the same reference
+without depending on this benchmark. `replay_via_port` is this benchmark's scored
+driver on top of that seam: same scoring as `harness.replay`, but every admission
+and eviction goes through the Port. The parity harness (tests/test_parity.py)
+asserts it reproduces the reference `replay` exactly; in miniserve, the same seam is
+implemented by `MiniservePort` over the real block pool and checked against
+`SimPort` there.
 """
+
+from kv_policy_core import BlockMeta, SimPort
 
 from agentic_kv_bench.harness import (
     _HINTS_ON,
@@ -20,84 +20,13 @@ from agentic_kv_bench.harness import (
     RunResult,
     _build_hint_schedule,
 )
-from kv_policy_core import BlockMeta, CacheView, Policy
 
-
-class SimPort:
-    """The simulator's implementation of the Port seam. Owns the resident set and
-    the eviction mechanics; the policy is driven against it exactly as it will be
-    driven against MiniservePort. `mode` is enforce (decisions enacted) or advisory
-    (recorded but not enacted) — the shadow-before-enforce switch."""
-
-    def __init__(self, capacity_tokens: int, mode: str = "enforce"):
-        self.capacity_tokens = capacity_tokens
-        self.mode = mode
-        self._resident: dict = {}
-        self.view = CacheView(self._resident)
-        self.resident_tokens = 0
-        self.evictions = 0
-        self._policy: Policy | None = None
-
-    def bind_policy(self, policy: Policy) -> None:
-        self._policy = policy
-        policy.bind(self.view)
-
-    def set_protected(self, working: frozenset) -> None:
-        self.view._set_protected(working)
-
-    def resident(self) -> dict:
-        return self._resident
-
-    def get(self, block_id):
-        return self._resident.get(block_id)
-
-    def admit(self, meta: BlockMeta) -> None:
-        self._resident[meta.block_id] = meta
-        self.resident_tokens += meta.size_tokens
-
-    def _reap(self, vid) -> None:
-        m = self._resident.pop(vid)
-        self.resident_tokens -= m.size_tokens
-        self.evictions += 1
-
-    def reap_if_resident(self, vid, protected: frozenset) -> None:
-        """Proactive (maintain) reap: only if resident and not currently needed."""
-        if vid in self._resident and vid not in protected:
-            self._reap(vid)
-
-    def free_to_fit(self, needed_tokens: int, now_ms: int, protected: frozenset) -> None:
-        while self.capacity_tokens - self.resident_tokens < needed_tokens:
-            evictable = sum(
-                m.size_tokens for b, m in self._resident.items() if b not in protected
-            )
-            if evictable < needed_tokens - (self.capacity_tokens - self.resident_tokens):
-                raise RuntimeError(
-                    "request working set exceeds capacity: its prefix cannot be "
-                    "held resident even after evicting everything evictable"
-                )
-            victims = self._policy.evict(
-                needed_tokens - (self.capacity_tokens - self.resident_tokens), now_ms
-            )
-            if not victims:
-                raise RuntimeError(
-                    "policy.evict returned no victims but space is needed; "
-                    "a correct policy must free space or the request cannot be admitted"
-                )
-            for vid in victims:
-                if vid in protected or vid not in self._resident:
-                    raise RuntimeError(
-                        f"policy tried to evict block {vid}, which is "
-                        f"{'needed by the current request' if vid in protected else 'not resident'}"
-                    )
-                self._reap(vid)
-
-    def now_ms(self) -> int:  # sim time comes from the trace; unused by the seam
-        return 0
+__all__ = ["SimPort", "replay_via_port"]
 
 
 def replay_via_port(
     accesses: list[RequestAccess],
-    policy: Policy,
+    policy,
     cost: CostParams,
     capacity_tokens: int,
     hints: HintDelivery | None = None,
@@ -105,7 +34,7 @@ def replay_via_port(
 ) -> RunResult:
     """The simulator driven through the Port seam. Scoring identical to
     harness.replay; the only difference is that admission/eviction go through
-    SimPort, which is what step 2 swaps for MiniservePort."""
+    SimPort, which is what miniserve swaps for MiniservePort."""
     hints = hints if hints is not None else _HINTS_ON
     port = SimPort(capacity_tokens)
     port.bind_policy(policy)
