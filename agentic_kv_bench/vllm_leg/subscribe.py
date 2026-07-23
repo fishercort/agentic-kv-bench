@@ -166,6 +166,9 @@ def main(argv=None):
     p.add_argument("--record-cap", type=int, default=100_000,
                    help="max per-event records held in RAM (counts stay exact); a long "
                         "run would otherwise OOM. A real deployment streams to a sink.")
+    p.add_argument("--evicted-cap", type=int, default=None,
+                   help="bound the per-source evicted-hash catalog (age out oldest past this; "
+                        "sized from the measured catalog peak). Unset = unbounded.")
     p.add_argument("--out", help="output records JSON path")
     p.add_argument("--show-payload", action="store_true",
                    help="print exactly what the agent retains and emits (metadata only), on "
@@ -189,7 +192,7 @@ def main(argv=None):
     with open(a.provenance) as f:
         provenance = json.load(f)
     agent = TelemetryAgent(provenance, salt=a.salt, block_size=a.block_size,
-                           record_cap=a.record_cap)
+                           record_cap=a.record_cap, evicted_cap=a.evicted_cap)
     meta = subscribe(endpoints, agent, golden_fingerprint=GOLDEN_FINGERPRINT,
                      max_batches=a.max_batches, duration_s=a.duration)
 

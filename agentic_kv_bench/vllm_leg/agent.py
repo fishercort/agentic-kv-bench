@@ -18,6 +18,7 @@ live minute-one check, not agent logic).
 """
 
 import hashlib
+from collections import OrderedDict
 
 # Record keys that would carry KV *content* rather than metadata. Enforced by
 # assert_metadata_only: content is never retained, serialized, or transmitted (token ids
@@ -53,19 +54,26 @@ def assert_metadata_only(record):
 
 class TelemetryAgent:
     def __init__(self, provenance, salt, block_size, salt_domain="default",
-                 record_cap=None, sink=None):
+                 record_cap=None, sink=None, evicted_cap=None):
         # provenance: stack fields stamped into every record (stack provenance).
         # Must include event_schema_version so the corpus survives a vLLM bump.
         self.provenance = dict(provenance)
         self.salt = salt
         self.salt_domain = salt_domain
         self.block_size = block_size
-        # source_id -> set of currently-resident block hashes (raw, in-memory only; never
-        # emitted raw — records carry salted_id, and content is already dropped upstream).
+        # source_id -> set of currently-resident block hashes. Naturally bounded: it tracks
+        # each engine's real cache (grows on store, shrinks on remove/clear), so it cannot
+        # exceed the engine's block count. Raw in-memory only; records carry salted_id.
         self._resident = {}
-        # source_id -> set of hashes evicted from THIS source and not yet re-stored. A later
-        # StoredBlock of one of these is eviction-driven recompute (number two).
+        # source_id -> ORDERED set of hashes evicted from THIS source and not yet re-stored.
+        # A later StoredBlock of one is eviction-driven recompute (number two). This is the
+        # one unbounded structure -> capped + aged-out (evicted_cap): oldest dropped first,
+        # since a block re-referenced only after aging out is not near-term eviction waste.
+        # A dropped entry that IS re-stored later is a missed count -> surfaced as
+        # evicted_aged_out so the (small, stale) undercount is visible, not silent.
         self._evicted = {}
+        self.evicted_cap = evicted_cap
+        self.evicted_aged_out = 0
         self.residual_tokens = 0            # number one: cross-instance-avoidable recompute
         self.eviction_recompute_tokens = 0  # number two: within-instance eviction recompute
         # Records go to a Sink. Default: a bounded in-RAM MemorySink so a long run can't OOM
@@ -95,13 +103,21 @@ class TelemetryAgent:
     def _emit(self, record):
         self._sink.emit(assert_metadata_only(record))
 
+    def _evict_add(self, evicted, h):
+        # ordered-set add: most-recently-evicted at the end; drop the oldest past the cap.
+        evicted.pop(h, None)
+        evicted[h] = None
+        if self.evicted_cap is not None and len(evicted) > self.evicted_cap:
+            evicted.popitem(last=False)  # oldest out; a re-store past here is a missed count
+            self.evicted_aged_out += 1
+
     def ingest(self, source_id, event):
         """Ingest ONE normalized event (event_model) from `source_id`. Events MUST arrive in
         global timestamp order across sources so 'resident elsewhere' is as-of store time.
         This is the real Compute interface; it consumes only the normalized model."""
         self.events_ingested += 1
         held = self._resident.setdefault(source_id, set())
-        evicted = self._evicted.setdefault(source_id, set())
+        evicted = self._evicted.setdefault(source_id, OrderedDict())
         kind = type(event).__name__
         if kind == "StoredBlock":
             h = event.block_hash
@@ -109,7 +125,7 @@ class TelemetryAgent:
             held.add(h)
             if h in evicted:
                 # number two: evicted from THIS source, now recomputed and re-stored.
-                evicted.discard(h)
+                evicted.pop(h, None)
                 self.eviction_recompute_tokens += self.block_size
                 self._emit({**self.provenance, "kind": "eviction_recompute",
                             "instance_id": source_id,
@@ -127,11 +143,11 @@ class TelemetryAgent:
         elif kind == "RemovedBlock":
             h = event.block_hash
             held.discard(h)
-            evicted.add(h)  # dropped; a later re-store is eviction recompute
+            self._evict_add(evicted, h)  # dropped; a later re-store is eviction recompute
             self._emit(self._lifecycle_record(source_id, h, event.medium, event.ts, "evict"))
         elif kind == "ClearedAll":
             for h in list(held):
-                evicted.add(h)
+                self._evict_add(evicted, h)
                 self._emit(self._lifecycle_record(source_id, h, event.medium, event.ts,
                                                   "clear"))
             held.clear()
@@ -157,6 +173,7 @@ class TelemetryAgent:
             "resident_entries": resident,
             "evicted_entries": evicted,
             "tracked_current": resident + evicted,
+            "evicted_aged_out": self.evicted_aged_out,
             "record_counts": dict(self.record_counts),
             "records_sampled": len(self.records),
             "events_ingested": self.events_ingested,

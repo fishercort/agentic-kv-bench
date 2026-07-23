@@ -48,6 +48,29 @@ def test_agent_ingests_normalized_events_directly():
     assert any(r["kind"] == "lifecycle" and r["reason"] == "clear" for r in agent.records)
 
 
+def test_evicted_cap_bounds_and_ages_out_oldest():
+    agent = TelemetryAgent(PROV, salt="s", block_size=4, evicted_cap=2)
+    for h in (1, 2, 3):  # evict 3 distinct blocks; cap 2 -> oldest (1) ages out
+        agent.ingest("a", StoredBlock(h, None, 4, "GPU", float(h)))
+        agent.ingest("a", RemovedBlock(h, "GPU", float(h) + 0.1))
+    st = agent.catalog_stats()
+    assert st["evicted_entries"] == 2 and st["evicted_aged_out"] == 1  # bounded, oldest dropped
+    # re-store the aged-out block -> NOT counted (it's gone; a stale re-use, not near-term waste)
+    agent.ingest("a", StoredBlock(1, None, 4, "GPU", 10.0))
+    assert agent.eviction_recompute_tokens == 0
+    # re-store a still-tracked block -> counted
+    agent.ingest("a", StoredBlock(3, None, 4, "GPU", 11.0))
+    assert agent.eviction_recompute_tokens == 4
+
+
+def test_no_cap_is_unbounded_no_ageout():
+    agent = TelemetryAgent(PROV, salt="s", block_size=4)  # evicted_cap=None (default)
+    for h in range(50):
+        agent.ingest("a", StoredBlock(h, None, 4, "GPU", float(h)))
+        agent.ingest("a", RemovedBlock(h, "GPU", float(h)))
+    assert agent.catalog_stats()["evicted_aged_out"] == 0  # nothing dropped by default
+
+
 def test_memory_sink_caps_sample_keeps_counts():
     s = MemorySink(cap=1)
     for i in range(5):
