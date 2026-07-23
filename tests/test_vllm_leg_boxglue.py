@@ -6,6 +6,7 @@ import pytest
 
 from agentic_kv_bench.vllm_leg.drive import (
     build_workload,
+    clamp_prompt,
     pace,
     select_by_footprint,
     shard_traces,
@@ -72,6 +73,16 @@ def test_pace_deltas_follow_arrival_times():
     assert [d for d, _ in pace(reqs, speedup=float("inf"))] == [0.0, 0.0, 0.0]
     # speedup halves wall-clock
     assert [d for d, _ in pace(reqs, speedup=2.0)] == [0.0, 1.0, 0.25]
+
+
+def test_clamp_prompt_keeps_prompt_plus_output_under_context():
+    # a prompt that would overflow max_model_len is truncated to the prefix (no 400)
+    toks = list(range(1000))
+    out = clamp_prompt(toks, max_tokens=5, max_model_len=500)
+    assert len(out) == 495 and out == toks[:495]      # prompt+output == max_model_len
+    # a prompt that already fits is untouched (prefix, not a copy-mangle)
+    small = list(range(100))
+    assert clamp_prompt(small, max_tokens=1, max_model_len=500) == small
 
 
 def test_footprint_and_selection_split_deep_tail():

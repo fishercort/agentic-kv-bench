@@ -47,7 +47,15 @@ def build_workload(traces, n_instances, shared_prefix_blocks, block_size, vocab_
     }
 
 
-def send_completion(base_url, token_ids, max_tokens, model, timeout=60.0):
+def clamp_prompt(token_ids, max_tokens, max_model_len):
+    """Truncate a prompt so prompt+output fits the served model's context, else vLLM 400s
+    the request. Truncates to the prefix, which preserves the shared-prefix blocks at the
+    front (so residual is unaffected)."""
+    cap = max_model_len - max_tokens
+    return token_ids[:cap] if len(token_ids) > cap else token_ids
+
+
+def send_completion(base_url, token_ids, max_tokens, model, timeout=600.0):
     """POST one prefill+decode to vLLM. Box-only (httpx). Returns the response JSON, whose
     `usage.prompt_tokens_details.cached_tokens` (the OpenAI-surfaced name for the internal
     `num_local_cached_tokens`) gives the local-APC cross-check."""
@@ -121,6 +129,9 @@ def main(argv=None):
                    help="the model name vLLM actually serves (e.g. "
                         "NousResearch/Meta-Llama-3.1-8B-Instruct); sent on every request. "
                         "Distinct from the trace's model, which only keys the shared prefix.")
+    p.add_argument("--max-model-len", type=int, default=131072,
+                   help="clamp each request so prompt+output fits the served model's "
+                        "context; requests near the cap are truncated to the prefix, not 400'd")
     a = p.parse_args(argv)
 
     base = {}
@@ -147,17 +158,28 @@ def main(argv=None):
             for delay, r in pace(sess, a.speedup):
                 if delay:
                     time.sleep(delay)
-                # served model on the wire (Llama); r["model"] (Claude) only keyed synth
-                send_completion(url, r["token_ids"], max(1, r["out"]), a.served_model)
+                out = max(1, r["out"])
+                toks = clamp_prompt(r["token_ids"], out, a.max_model_len)
+                try:
+                    # served model on the wire (Llama); r["model"] (Claude) only keyed synth
+                    send_completion(url, toks, out, a.served_model)
+                except Exception:
+                    pass  # a single failed request drops that request, not the whole session
         finally:
             if gate:
                 gate.release()
 
-    threads = []
-    for inst, sessions in workload.items():
-        for sess in sessions:
-            t = threading.Thread(target=run_session, args=(base[inst], sess), daemon=True)
-            threads.append(t)
+    # interleave sessions across instances so BOTH run concurrently from the start (not all
+    # of instance 0 then all of instance 1) -- required for cross-instance residual and so a
+    # bounded agent window captures both instances.
+    pairs = []
+    maxlen = max((len(v) for v in workload.values()), default=0)
+    for i in range(maxlen):
+        for inst, sessions in workload.items():
+            if i < len(sessions):
+                pairs.append((base[inst], sessions[i]))
+    threads = [threading.Thread(target=run_session, args=(url, sess), daemon=True)
+               for url, sess in pairs]
     for t in threads:
         t.start()
     for t in threads:
