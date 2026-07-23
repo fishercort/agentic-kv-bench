@@ -117,6 +117,10 @@ def main(argv=None):
     p.add_argument("--footprint-cap", type=int, default=None,
                    help="replay only sessions whose unique KV footprint (distinct blocks * "
                         "corpus block_size) <= this; the excluded deep tail is logged, not hidden")
+    p.add_argument("--served-model", required=True,
+                   help="the model name vLLM actually serves (e.g. "
+                        "NousResearch/Meta-Llama-3.1-8B-Instruct); sent on every request. "
+                        "Distinct from the trace's model, which only keys the shared prefix.")
     a = p.parse_args(argv)
 
     base = {}
@@ -143,7 +147,8 @@ def main(argv=None):
             for delay, r in pace(sess, a.speedup):
                 if delay:
                     time.sleep(delay)
-                send_completion(url, r["token_ids"], max(1, r["out"]), r["model"])
+                # served model on the wire (Llama); r["model"] (Claude) only keyed synth
+                send_completion(url, r["token_ids"], max(1, r["out"]), a.served_model)
         finally:
             if gate:
                 gate.release()
