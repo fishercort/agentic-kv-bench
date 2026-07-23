@@ -1,25 +1,20 @@
-"""The telemetry agent: the shipping deliverable, coded and tested with zero GPU time.
+"""The telemetry agent's Compute module: consumes the normalized event model (event_model)
+from any Source and produces two numbers + metadata-only records to a Sink.
 
-Subscriber-only (no request-path proxy; the observe tier). It consumes decoded
-KV-event batches from N vLLM instances and produces two things:
+Subscriber-only (no request-path proxy; the observe tier). The real interface is
+`ingest(source_id, event)` over normalized events; `ingest_batch`/`run` are compat helpers
+that push native vLLM batches through the vLLM Source first.
 
-  1. Residual dedup (headline number one), event-driven. vLLM emits `BlockStored` only
-     for blocks it actually (re)computed and cached — a block served from the instance's
-     OWN prefix cache (counted in Prometheus `num_local_cached_tokens`) is never stored.
-     So the set of stored block hashes is ALREADY net of local APC hits. A stored block
-     whose hash is currently RESIDENT on another instance is recompute a cross-instance
-     cache would have avoided: that is the residual. residual_tokens = residual_blocks *
-     block_size. `num_local_cached_tokens` is carried for the cross-check and dollarization,
-     not re-subtracted (it is baked into what does/doesn't get stored).
+  1. Residual dedup (number one). A StoredBlock whose hash is currently RESIDENT on another
+     source is recompute a cross-instance cache would have avoided. (Blocks a source served
+     from its OWN cache are never stored, so stores are already net of local hits.)
+  2. Eviction waste (number two). A StoredBlock whose hash was previously evicted from the
+     SAME source is eviction-driven recompute.
+  Plus day-one-schema records to the Sink: stack provenance, salted block ids, lifecycle.
 
-  2. Day-one schema records — the impossible-to-retrofit fields, emitted ONCE
-     here: stack provenance, salted hash domains, metadata-only-at-the-wire, retention /
-     lifecycle events, per-tenant attribution, counterfactual forward window.
-
-Correctness assumption (operationally enforced): both instances share PYTHONHASHSEED + hash
-algo, so the same prefix hashes identically across instances. Without that, cross-instance
-overlap is silently zero; the agent cannot detect it from events alone, so it is a live
-minute-one check, not agent logic.
+Correctness assumption (operationally enforced): sources share the hash seed + algo, so the
+same prefix hashes identically across them; else cross-instance overlap is silently zero (a
+live minute-one check, not agent logic).
 """
 
 import hashlib
@@ -58,77 +53,99 @@ def assert_metadata_only(record):
 
 class TelemetryAgent:
     def __init__(self, provenance, salt, block_size, salt_domain="default",
-                 record_cap=None):
+                 record_cap=None, sink=None):
         # provenance: stack fields stamped into every record (stack provenance).
         # Must include event_schema_version so the corpus survives a vLLM bump.
         self.provenance = dict(provenance)
         self.salt = salt
         self.salt_domain = salt_domain
         self.block_size = block_size
-        # instance_id -> set of currently-resident block hashes (raw, in-memory only;
-        # never emitted raw — records carry salted_id).
+        # source_id -> set of currently-resident block hashes (raw, in-memory only; never
+        # emitted raw — records carry salted_id, and content is already dropped upstream).
         self._resident = {}
-        # instance_id -> set of hashes evicted from THIS instance and not yet re-stored.
-        # A later BlockStored of one of these is eviction-driven recompute (number two):
-        # the block was needed again after being dropped. This is what LRU costs under
-        # pressure that a larger/oracle cache would have avoided.
+        # source_id -> set of hashes evicted from THIS source and not yet re-stored. A later
+        # StoredBlock of one of these is eviction-driven recompute (number two).
         self._evicted = {}
-        self.residual_tokens = 0          # number one: cross-instance-avoidable recompute
-        self.eviction_recompute_tokens = 0  # number two: within-instance eviction-driven recompute
-        # Aggregate counters are exact and cheap. Per-event records are the day-one-schema
-        # audit trail; at fleet scale they must stream to storage, not accumulate in RAM.
-        # record_cap bounds the in-memory sample so a long run cannot OOM the agent (a real
-        # deployment sets a sink instead); record_counts stays exact regardless.
-        self.record_cap = record_cap
-        self.record_counts = {}
-        self.records = []  # bounded sample of emitted day-one-schema records
+        self.residual_tokens = 0            # number one: cross-instance-avoidable recompute
+        self.eviction_recompute_tokens = 0  # number two: within-instance eviction recompute
+        # Records go to a Sink. Default: a bounded in-RAM MemorySink so a long run can't OOM
+        # (a real deployment injects a streaming sink); counts stay exact regardless.
+        from .sinks import MemorySink
+        self._sink = sink if sink is not None else MemorySink(cap=record_cap)
         self.events_ingested = 0
-        # peak of (resident + evicted) raw-hash entries held across instances: the catalog
-        # memory driver. Measured on the box to size the configurable cap + age-out.
+        # peak (resident+evicted) raw-hash entries across sources: the catalog memory driver.
         self.catalog_peak = 0
 
+    # compat surface: records/record_counts read through whatever sink is attached
+    @property
+    def records(self):
+        return getattr(self._sink, "records", [])
+
+    @property
+    def record_counts(self):
+        return getattr(self._sink, "counts", {})
+
     # --- resident-set maintenance ---------------------------------------------
-    def _resident_elsewhere(self, instance_id, h):
+    def _resident_elsewhere(self, source_id, h):
         for other, held in self._resident.items():
-            if other != instance_id and h in held:
+            if other != source_id and h in held:
                 return other
         return None
 
-    def ingest_batch(self, instance_id, batch):
-        """Ingest one decoded KVEventBatch from `instance_id`. Batches MUST be fed in
-        global timestamp order across instances so 'resident elsewhere' is as-of store
-        time. Returns the records emitted for this batch."""
-        held = self._resident.setdefault(instance_id, set())
-        evicted = self._evicted.setdefault(instance_id, set())
-        emitted = []
-        for ev in batch.events:
-            self.events_ingested += 1
-            tag = type(ev).__name__
-            if tag == "BlockStored":
-                emitted += self._on_stored(instance_id, held, evicted, ev, batch.ts)
-            elif tag == "BlockRemoved":
-                for h in ev.block_hashes:
-                    held.discard(h)
-                    evicted.add(h)  # dropped; a later re-store is eviction recompute
-                    emitted.append(self._lifecycle_record(instance_id, h, ev.medium,
-                                                          batch.ts, "evict"))
-            elif tag == "AllBlocksCleared":
-                for h in list(held):
-                    evicted.add(h)
-                    emitted.append(self._lifecycle_record(instance_id, h, ev.medium,
-                                                          batch.ts, "clear"))
-                held.clear()
-        # exact counts always; bounded in-memory sample (a real deployment streams to a sink)
-        for r in emitted:
-            k = r["kind"]
-            self.record_counts[k] = self.record_counts.get(k, 0) + 1
-            if self.record_cap is None or len(self.records) < self.record_cap:
-                self.records.append(r)
+    def _emit(self, record):
+        self._sink.emit(assert_metadata_only(record))
+
+    def ingest(self, source_id, event):
+        """Ingest ONE normalized event (event_model) from `source_id`. Events MUST arrive in
+        global timestamp order across sources so 'resident elsewhere' is as-of store time.
+        This is the real Compute interface; it consumes only the normalized model."""
+        self.events_ingested += 1
+        held = self._resident.setdefault(source_id, set())
+        evicted = self._evicted.setdefault(source_id, set())
+        kind = type(event).__name__
+        if kind == "StoredBlock":
+            h = event.block_hash
+            elsewhere = self._resident_elsewhere(source_id, h)
+            held.add(h)
+            if h in evicted:
+                # number two: evicted from THIS source, now recomputed and re-stored.
+                evicted.discard(h)
+                self.eviction_recompute_tokens += self.block_size
+                self._emit({**self.provenance, "kind": "eviction_recompute",
+                            "instance_id": source_id,
+                            "block_id": salted_id(h, self.salt_domain, self.salt),
+                            "n_tokens": self.block_size, "medium": event.medium,
+                            "at_ms": event.ts})
+            if elsewhere is not None:
+                # number one: resident on another source -> cross-instance-avoidable.
+                self.residual_tokens += self.block_size
+                self._emit({**self.provenance, "kind": "residual_block",
+                            "instance_id": source_id, "also_on_instance": elsewhere,
+                            "block_id": salted_id(h, self.salt_domain, self.salt),
+                            "n_tokens": self.block_size, "medium": event.medium,
+                            "at_ms": event.ts})
+        elif kind == "RemovedBlock":
+            h = event.block_hash
+            held.discard(h)
+            evicted.add(h)  # dropped; a later re-store is eviction recompute
+            self._emit(self._lifecycle_record(source_id, h, event.medium, event.ts, "evict"))
+        elif kind == "ClearedAll":
+            for h in list(held):
+                evicted.add(h)
+                self._emit(self._lifecycle_record(source_id, h, event.medium, event.ts,
+                                                  "clear"))
+            held.clear()
         tracked = (sum(len(s) for s in self._resident.values())
                    + sum(len(s) for s in self._evicted.values()))
         if tracked > self.catalog_peak:
             self.catalog_peak = tracked
-        return emitted
+
+    def ingest_batch(self, source_id, batch):
+        """Compat: push a native vLLM KVEventBatch through the vLLM Source and ingest the
+        normalized events. The real interface is `ingest(source_id, event)`."""
+        from .sources import normalize_vllm_batch
+        for sid, ev in normalize_vllm_batch(source_id, batch):
+            self.ingest(sid, ev)
 
     def catalog_stats(self):
         """The agent's own memory footprint drivers, for the resource-envelope claim: how
@@ -145,58 +162,17 @@ class TelemetryAgent:
             "events_ingested": self.events_ingested,
         }
 
-    def _on_stored(self, instance_id, held, evicted, ev, ts):
-        emitted = []
-        for h in ev.block_hashes:
-            elsewhere = self._resident_elsewhere(instance_id, h)
-            held.add(h)
-            if h in evicted:
-                # number two: this block was evicted from THIS instance and is now being
-                # recomputed and re-stored -> eviction-driven recompute (LRU's cost under
-                # pressure). It is no longer in the evicted set now that it is back.
-                evicted.discard(h)
-                self.eviction_recompute_tokens += self.block_size
-                emitted.append(assert_metadata_only({
-                    **self.provenance,
-                    "kind": "eviction_recompute",
-                    "instance_id": instance_id,
-                    "block_id": salted_id(h, self.salt_domain, self.salt),
-                    "n_tokens": self.block_size,
-                    "medium": ev.medium,
-                    "at_ms": ts,
-                }))
-            if elsewhere is not None:
-                # number one: this block is resident elsewhere -> cross-instance-avoidable.
-                self.residual_tokens += self.block_size
-                emitted.append(assert_metadata_only({
-                    **self.provenance,
-                    "kind": "residual_block",
-                    "instance_id": instance_id,
-                    "also_on_instance": elsewhere,
-                    "block_id": salted_id(h, self.salt_domain, self.salt),
-                    "n_tokens": self.block_size,
-                    "medium": ev.medium,
-                    "at_ms": ts,
-                }))
-        return emitted
-
-    def _lifecycle_record(self, instance_id, h, medium, ts, reason):
-        # Retention / lifecycle audit trail. Records posture, never a destruction
-        # guarantee. counterfactual_window filled by the band analysis downstream.
-        return assert_metadata_only({
-            **self.provenance,
-            "kind": "lifecycle",
-            "reason": reason,
-            "instance_id": instance_id,
-            "block_id": salted_id(h, self.salt_domain, self.salt),
-            "tier": medium,
-            "at_ms": ts,
-        })
+    def _lifecycle_record(self, source_id, h, medium, ts, reason):
+        # Retention / lifecycle audit trail. Records posture, never a destruction guarantee.
+        return {**self.provenance, "kind": "lifecycle", "reason": reason,
+                "instance_id": source_id,
+                "block_id": salted_id(h, self.salt_domain, self.salt),
+                "tier": medium, "at_ms": ts}
 
     # --- driver ----------------------------------------------------------------
     def run(self, streams):
-        """streams: {instance_id: [KVEventBatch, ...]}. Merges by ts and ingests in
-        global order. Returns total residual_tokens."""
+        """streams: {source_id: [KVEventBatch, ...]}. Merges by ts and ingests in global
+        order. Returns total residual_tokens."""
         merged = sorted(
             ((b.ts, inst, b) for inst, batches in streams.items() for b in batches),
             key=lambda t: t[0],
