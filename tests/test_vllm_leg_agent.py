@@ -127,3 +127,38 @@ def test_lifecycle_records_emitted_for_remove_and_clear():
     agent.run({inst: golden_batches(inst) for inst in GOLDEN["streams"]})
     reasons = {r["reason"] for r in agent.records if r["kind"] == "lifecycle"}
     assert "evict" in reasons and "clear" in reasons
+
+
+# --- eviction waste (number two) ----------------------------------------------
+def test_eviction_recompute_counts_restore_after_evict():
+    # store block 7, evict it, store it again on the SAME instance -> one eviction recompute
+    s1 = decode_batch([1.0, [["BlockStored", [7], None, [0, 1, 2, 3], 4, None, "GPU"]], 0])
+    rm = decode_batch([2.0, [["BlockRemoved", [7], "GPU"]], 0])
+    s2 = decode_batch([3.0, [["BlockStored", [7], None, [0, 1, 2, 3], 4, None, "GPU"]], 0])
+    agent = TelemetryAgent(PROV, salt="s", block_size=4)
+    for b in (s1, rm, s2):
+        agent.ingest_batch(0, b)
+    assert agent.eviction_recompute_tokens == 4  # one block re-stored after eviction
+    kinds = {r["kind"] for r in agent.records}
+    assert "eviction_recompute" in kinds
+
+
+def test_store_without_prior_evict_is_not_eviction_recompute():
+    # a first-time store (never evicted) is not waste
+    s1 = decode_batch([1.0, [["BlockStored", [7, 8], None, [0, 1, 2, 3, 4, 5, 6, 7],
+                              4, None, "GPU"]], 0])
+    agent = TelemetryAgent(PROV, salt="s", block_size=4)
+    agent.ingest_batch(0, s1)
+    assert agent.eviction_recompute_tokens == 0
+
+
+def test_eviction_recompute_is_within_instance_only():
+    # block resident on instance 0, evicted there; instance 1 storing it is RESIDUAL
+    # (cross-instance), not eviction recompute on instance 1 (never evicted there).
+    a = decode_batch([1.0, [["BlockStored", [5], None, [0, 1, 2, 3], 4, None, "GPU"]], 0])
+    b = decode_batch([2.0, [["BlockStored", [5], None, [0, 1, 2, 3], 4, None, "GPU"]], 0])
+    agent = TelemetryAgent(PROV, salt="s", block_size=4)
+    agent.ingest_batch(0, a)
+    agent.ingest_batch(1, b)
+    assert agent.eviction_recompute_tokens == 0   # neither instance re-stored post-evict
+    assert agent.residual_tokens == 4             # instance 1's store is cross-instance

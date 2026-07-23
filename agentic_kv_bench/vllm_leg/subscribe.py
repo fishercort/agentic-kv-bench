@@ -122,8 +122,11 @@ def main(argv=None):
               max_batches=a.max_batches, duration_s=a.duration)
     with open(a.out, "w") as f:
         json.dump({"residual_tokens": agent.residual_tokens,
+                   "eviction_recompute_tokens": agent.eviction_recompute_tokens,
                    "records": agent.records}, f, indent=1)
-    print(f"residual_tokens={agent.residual_tokens} records={len(agent.records)} -> {a.out}")
+    print(f"residual_tokens={agent.residual_tokens} "
+          f"eviction_recompute_tokens={agent.eviction_recompute_tokens} "
+          f"records={len(agent.records)} -> {a.out}")
 
 
 if __name__ == "__main__":

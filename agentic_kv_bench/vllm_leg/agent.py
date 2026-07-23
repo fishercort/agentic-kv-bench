@@ -67,7 +67,13 @@ class TelemetryAgent:
         # instance_id -> set of currently-resident block hashes (raw, in-memory only;
         # never emitted raw — records carry salted_id).
         self._resident = {}
-        self.residual_tokens = 0
+        # instance_id -> set of hashes evicted from THIS instance and not yet re-stored.
+        # A later BlockStored of one of these is eviction-driven recompute (number two):
+        # the block was needed again after being dropped. This is what LRU costs under
+        # pressure that a larger/oracle cache would have avoided.
+        self._evicted = {}
+        self.residual_tokens = 0          # number one: cross-instance-avoidable recompute
+        self.eviction_recompute_tokens = 0  # number two: within-instance eviction-driven recompute
         self.records = []  # emitted day-one-schema records
 
     # --- resident-set maintenance ---------------------------------------------
@@ -82,31 +88,49 @@ class TelemetryAgent:
         global timestamp order across instances so 'resident elsewhere' is as-of store
         time. Returns the records emitted for this batch."""
         held = self._resident.setdefault(instance_id, set())
+        evicted = self._evicted.setdefault(instance_id, set())
         emitted = []
         for ev in batch.events:
             tag = type(ev).__name__
             if tag == "BlockStored":
-                emitted += self._on_stored(instance_id, held, ev, batch.ts)
+                emitted += self._on_stored(instance_id, held, evicted, ev, batch.ts)
             elif tag == "BlockRemoved":
                 for h in ev.block_hashes:
                     held.discard(h)
+                    evicted.add(h)  # dropped; a later re-store is eviction recompute
                     emitted.append(self._lifecycle_record(instance_id, h, ev.medium,
                                                           batch.ts, "evict"))
             elif tag == "AllBlocksCleared":
                 for h in list(held):
+                    evicted.add(h)
                     emitted.append(self._lifecycle_record(instance_id, h, ev.medium,
                                                           batch.ts, "clear"))
                 held.clear()
         self.records += emitted
         return emitted
 
-    def _on_stored(self, instance_id, held, ev, ts):
+    def _on_stored(self, instance_id, held, evicted, ev, ts):
         emitted = []
         for h in ev.block_hashes:
             elsewhere = self._resident_elsewhere(instance_id, h)
             held.add(h)
+            if h in evicted:
+                # number two: this block was evicted from THIS instance and is now being
+                # recomputed and re-stored -> eviction-driven recompute (LRU's cost under
+                # pressure). It is no longer in the evicted set now that it is back.
+                evicted.discard(h)
+                self.eviction_recompute_tokens += self.block_size
+                emitted.append(assert_metadata_only({
+                    **self.provenance,
+                    "kind": "eviction_recompute",
+                    "instance_id": instance_id,
+                    "block_id": salted_id(h, self.salt_domain, self.salt),
+                    "n_tokens": self.block_size,
+                    "medium": ev.medium,
+                    "at_ms": ts,
+                }))
             if elsewhere is not None:
-                # cross-instance-avoidable recompute: this block is resident elsewhere.
+                # number one: this block is resident elsewhere -> cross-instance-avoidable.
                 self.residual_tokens += self.block_size
                 emitted.append(assert_metadata_only({
                     **self.provenance,
