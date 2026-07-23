@@ -152,6 +152,29 @@ def test_store_without_prior_evict_is_not_eviction_recompute():
     assert agent.eviction_recompute_tokens == 0
 
 
+def test_record_cap_bounds_ram_but_counts_stay_exact():
+    # many residual blocks; cap the in-memory sample at 1 but counts must be exact.
+    a = decode_batch([1.0, [["BlockStored", [1, 2, 3], None, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+                             4, None, "GPU"]], 0])
+    b = decode_batch([2.0, [["BlockStored", [1, 2, 3], None, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+                             4, None, "GPU"]], 0])
+    agent = TelemetryAgent(PROV, salt="s", block_size=4, record_cap=1)
+    agent.ingest_batch(0, a)
+    agent.ingest_batch(1, b)  # 3 cross-instance residual blocks
+    assert len(agent.records) == 1                       # RAM bounded
+    assert agent.record_counts.get("residual_block") == 3  # count exact
+    assert agent.residual_tokens == 12                   # 3 blocks * 4, exact
+
+
+def test_catalog_stats_report_footprint_drivers():
+    agent = TelemetryAgent(PROV, salt="s", block_size=4)
+    agent.run({inst: golden_batches(inst) for inst in GOLDEN["streams"]})
+    st = agent.catalog_stats()
+    assert st["catalog_peak_entries"] >= st["tracked_current"]
+    assert "events_ingested" in st and st["events_ingested"] > 0
+    assert set(st["record_counts"]) <= {"residual_block", "eviction_recompute", "lifecycle"}
+
+
 def test_eviction_recompute_is_within_instance_only():
     # block resident on instance 0, evicted there; instance 1 storing it is RESIDUAL
     # (cross-instance), not eviction recompute on instance 1 (never evicted there).

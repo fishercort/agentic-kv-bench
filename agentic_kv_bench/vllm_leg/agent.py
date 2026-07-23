@@ -56,7 +56,8 @@ def assert_metadata_only(record):
 
 
 class TelemetryAgent:
-    def __init__(self, provenance, salt, block_size, salt_domain="default"):
+    def __init__(self, provenance, salt, block_size, salt_domain="default",
+                 record_cap=None):
         # provenance: stack fields stamped into every record (stack provenance).
         # Must include event_schema_version so the corpus survives a vLLM bump.
         self.provenance = dict(provenance)
@@ -73,7 +74,17 @@ class TelemetryAgent:
         self._evicted = {}
         self.residual_tokens = 0          # number one: cross-instance-avoidable recompute
         self.eviction_recompute_tokens = 0  # number two: within-instance eviction-driven recompute
-        self.records = []  # emitted day-one-schema records
+        # Aggregate counters are exact and cheap. Per-event records are the day-one-schema
+        # audit trail; at fleet scale they must stream to storage, not accumulate in RAM.
+        # record_cap bounds the in-memory sample so a long run cannot OOM the agent (a real
+        # deployment sets a sink instead); record_counts stays exact regardless.
+        self.record_cap = record_cap
+        self.record_counts = {}
+        self.records = []  # bounded sample of emitted day-one-schema records
+        self.events_ingested = 0
+        # peak of (resident + evicted) raw-hash entries held across instances: the catalog
+        # memory driver. Measured on the box to size the configurable cap + age-out.
+        self.catalog_peak = 0
 
     # --- resident-set maintenance ---------------------------------------------
     def _resident_elsewhere(self, instance_id, h):
@@ -90,6 +101,7 @@ class TelemetryAgent:
         evicted = self._evicted.setdefault(instance_id, set())
         emitted = []
         for ev in batch.events:
+            self.events_ingested += 1
             tag = type(ev).__name__
             if tag == "BlockStored":
                 emitted += self._on_stored(instance_id, held, evicted, ev, batch.ts)
@@ -105,8 +117,32 @@ class TelemetryAgent:
                     emitted.append(self._lifecycle_record(instance_id, h, ev.medium,
                                                           batch.ts, "clear"))
                 held.clear()
-        self.records += emitted
+        # exact counts always; bounded in-memory sample (a real deployment streams to a sink)
+        for r in emitted:
+            k = r["kind"]
+            self.record_counts[k] = self.record_counts.get(k, 0) + 1
+            if self.record_cap is None or len(self.records) < self.record_cap:
+                self.records.append(r)
+        tracked = (sum(len(s) for s in self._resident.values())
+                   + sum(len(s) for s in self._evicted.values()))
+        if tracked > self.catalog_peak:
+            self.catalog_peak = tracked
         return emitted
+
+    def catalog_stats(self):
+        """The agent's own memory footprint drivers, for the resource-envelope claim: how
+        many raw block-hash entries it holds. Peak sizes the configurable catalog cap."""
+        resident = sum(len(s) for s in self._resident.values())
+        evicted = sum(len(s) for s in self._evicted.values())
+        return {
+            "catalog_peak_entries": self.catalog_peak,
+            "resident_entries": resident,
+            "evicted_entries": evicted,
+            "tracked_current": resident + evicted,
+            "record_counts": dict(self.record_counts),
+            "records_sampled": len(self.records),
+            "events_ingested": self.events_ingested,
+        }
 
     def _on_stored(self, instance_id, held, evicted, ev, ts):
         emitted = []

@@ -13,7 +13,7 @@ from agentic_kv_bench.vllm_leg.drive import (
 )
 from agentic_kv_bench.vllm_leg.kv_events import SchemaDriftError
 from agentic_kv_bench.vllm_leg.mock_stream import GOLDEN, GOLDEN_FINGERPRINT
-from agentic_kv_bench.vllm_leg.subscribe import check_schema, seed_agreement
+from agentic_kv_bench.vllm_leg.subscribe import check_schema, seed_agreement, seq_gap
 
 
 # --- minute-one sanity checks -------------------------------------------------
@@ -30,6 +30,14 @@ def test_check_schema_accepts_golden_and_flags_unknown_shape():
 def test_check_schema_raises_on_real_drift():
     with pytest.raises(SchemaDriftError):
         check_schema([1.0, [["BlockTeleported", [1], "GPU"]], 0])
+
+
+def test_seq_gap_detects_dropped_messages():
+    assert seq_gap(None, 5) == 0     # first message, no baseline
+    assert seq_gap(5, 6) == 0        # in order
+    assert seq_gap(5, 9) == 3        # dropped 6,7,8
+    assert seq_gap(5, 5) == 0        # duplicate / no advance
+    assert seq_gap(9, 2) == 0        # publisher restart (reset), not a drop
 
 
 def test_seed_agreement_detects_pythonhashseed_mismatch():

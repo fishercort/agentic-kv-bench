@@ -37,13 +37,25 @@ def seed_agreement(stored_hashes_by_instance):
     return all(list(s) == first for s in sets[1:])
 
 
+def seq_gap(prev, cur):
+    """Missing-message count between two consecutive ZMQ publisher sequence numbers. vLLM
+    stamps each multipart message with a monotonic seq (8-byte big-endian); a jump means
+    the SUB socket dropped events under load — which would silently UNDERCOUNT residual /
+    eviction. Returns messages lost between prev and cur (0 if in-order or a reset)."""
+    if prev is None or cur <= prev:
+        return 0
+    return cur - prev - 1
+
+
 def subscribe(endpoints, agent, golden_fingerprint=None, max_batches=None,
               duration_s=None):
     """Subscribe to each instance's ZMQ endpoint and feed decoded batches to `agent` in
     arrival order. endpoints: {instance_id: "tcp://host:port"}. Box-only (needs zmq +
     msgspec). The first batch per instance is schema-checked against golden_fingerprint.
     Stops at max_batches, after duration_s wall-seconds, or on SIGINT — whichever first;
-    the caller dumps agent state after this returns (so a timed measurement window works)."""
+    the caller dumps agent state after this returns (so a timed measurement window works).
+    Returns an ingest-meta dict: messages seen, dropped-message count per instance (from
+    seq gaps), and wall seconds — the lag/drop evidence for the resource envelope."""
     import time
 
     import msgspec  # box-only
@@ -60,7 +72,10 @@ def subscribe(endpoints, agent, golden_fingerprint=None, max_batches=None,
         socks[s] = inst
     checked = set()
     seen = 0
-    deadline = None if duration_s is None else time.monotonic() + duration_s
+    last_seq = {}      # instance -> last seq seen
+    dropped = {}       # instance -> total messages dropped (seq gaps)
+    started = time.monotonic()
+    deadline = None if duration_s is None else started + duration_s
     try:
         while max_batches is None or seen < max_batches:
             if deadline is not None:
@@ -72,7 +87,10 @@ def subscribe(endpoints, agent, golden_fingerprint=None, max_batches=None,
                 ready = poller.poll(timeout=500.0)
             for s, _ in ready:
                 inst = socks[s]
-                _topic, _seq, payload = s.recv_multipart()
+                _topic, seq_bytes, payload = s.recv_multipart()
+                seq = int.from_bytes(seq_bytes, "big")
+                dropped[inst] = dropped.get(inst, 0) + seq_gap(last_seq.get(inst), seq)
+                last_seq[inst] = seq
                 arr = msgspec.msgpack.decode(payload)
                 if golden_fingerprint is not None and inst not in checked:
                     known = golden_fingerprint.get(inst) if isinstance(
@@ -86,7 +104,9 @@ def subscribe(endpoints, agent, golden_fingerprint=None, max_batches=None,
     finally:
         for s in socks:
             s.close(0)
-    return agent
+    return {"messages_seen": seen, "dropped_by_instance": dropped,
+            "dropped_total": sum(dropped.values()),
+            "wall_seconds": time.monotonic() - started}
 
 
 def main(argv=None):
@@ -108,6 +128,9 @@ def main(argv=None):
     p.add_argument("--duration", type=float, default=None,
                    help="stop after N wall-seconds and dump (the measurement window); "
                         "Ctrl-C also stops cleanly and dumps")
+    p.add_argument("--record-cap", type=int, default=100_000,
+                   help="max per-event records held in RAM (counts stay exact); a long "
+                        "run would otherwise OOM. A real deployment streams to a sink.")
     p.add_argument("--out", required=True, help="output records JSON path")
     a = p.parse_args(argv)
 
@@ -117,16 +140,37 @@ def main(argv=None):
         endpoints[int(k)] = v
     with open(a.provenance) as f:
         provenance = json.load(f)
-    agent = TelemetryAgent(provenance, salt=a.salt, block_size=a.block_size)
-    subscribe(endpoints, agent, golden_fingerprint=GOLDEN_FINGERPRINT,
-              max_batches=a.max_batches, duration_s=a.duration)
+    agent = TelemetryAgent(provenance, salt=a.salt, block_size=a.block_size,
+                           record_cap=a.record_cap)
+    meta = subscribe(endpoints, agent, golden_fingerprint=GOLDEN_FINGERPRINT,
+                     max_batches=a.max_batches, duration_s=a.duration)
+
+    import resource
+    import sys
+    ru = resource.getrusage(resource.RUSAGE_SELF)
+    # ru_maxrss is KiB on Linux (the box), bytes on macOS; record raw + platform.
+    envelope = {
+        "peak_rss_ru_maxrss": ru.ru_maxrss, "ru_maxrss_unit":
+            "KiB" if sys.platform.startswith("linux") else "bytes",
+        "cpu_seconds": round(ru.ru_utime + ru.ru_stime, 2),
+        "wall_seconds": round(meta["wall_seconds"], 2),
+        "avg_cores": round((ru.ru_utime + ru.ru_stime) / max(meta["wall_seconds"], 1e-9), 3),
+        "messages_seen": meta["messages_seen"],
+        "dropped_total": meta["dropped_total"],
+        "dropped_by_instance": meta["dropped_by_instance"],
+        **agent.catalog_stats(),
+    }
     with open(a.out, "w") as f:
         json.dump({"residual_tokens": agent.residual_tokens,
                    "eviction_recompute_tokens": agent.eviction_recompute_tokens,
+                   "resource_envelope": envelope,
                    "records": agent.records}, f, indent=1)
-    print(f"residual_tokens={agent.residual_tokens} "
-          f"eviction_recompute_tokens={agent.eviction_recompute_tokens} "
-          f"records={len(agent.records)} -> {a.out}")
+    print(f"residual={agent.residual_tokens} eviction={agent.eviction_recompute_tokens} "
+          f"msgs={meta['messages_seen']} dropped={meta['dropped_total']} "
+          f"catalog_peak={agent.catalog_peak} avg_cores={envelope['avg_cores']} -> {a.out}")
+    if meta["dropped_total"]:
+        print(f"WARNING: {meta['dropped_total']} messages dropped (seq gaps) -> numbers "
+              "UNDERCOUNT; lower --speedup or raise vLLM kv-events hwm and re-run.")
 
 
 if __name__ == "__main__":
