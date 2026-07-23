@@ -109,9 +109,44 @@ def subscribe(endpoints, agent, golden_fingerprint=None, max_batches=None,
             "wall_seconds": time.monotonic() - started}
 
 
+def _show_payload():
+    """Print exactly what the agent retains and emits, on the version-pinned mock stream,
+    and prove it is metadata-only. Standalone (no live vLLM). This is the trust check a
+    security reviewer runs: here is everything the process holds and would transmit."""
+    import json
+
+    from .agent import TelemetryAgent, assert_metadata_only
+    from .kv_events import EVENT_SCHEMA_VERSION
+    from .mock_stream import GOLDEN, golden_batches
+
+    prov = {"gpu": "<example>", "vllm_version": "0.11.0",
+            "event_schema_version": EVENT_SCHEMA_VERSION, "block_size": GOLDEN["block_size"]}
+    agent = TelemetryAgent(prov, salt="example-deployment-salt",
+                           block_size=GOLDEN["block_size"])
+
+    print("=== INGRESS: a decoded vLLM BlockStored event, as the agent holds it ===")
+    ev = golden_batches(0)[0].events[0]
+    print(f"  {type(ev).__name__}: block_hashes={ev.block_hashes} block_size={ev.block_size} "
+          f"medium={ev.medium} token_ids={ev.token_ids}")
+    print("  ^ token_ids is None: token content is dropped at the decode boundary, never held.")
+
+    for inst in GOLDEN["streams"]:
+        for batch in golden_batches(inst):
+            agent.ingest_batch(inst, batch)
+
+    print("\n=== EGRESS: every record the agent retains / would transmit ===")
+    for r in agent.records:
+        assert_metadata_only(r)  # raises if any content slipped in
+        print("  " + json.dumps(r))
+    print(f"\n{len(agent.records)} records, all passed assert_metadata_only.")
+    print("Contents: salted block ids, token COUNTS, timestamps, lifecycle, stack provenance.")
+    print("Never present: token ids, text, or KV tensors (KV tensors never leave the GPU).")
+
+
 def main(argv=None):
     """CLI: subscribe to both instances, run the agent, dump records + residual to --out.
-    Box-only (needs zmq/msgspec via `uv sync --extra box`)."""
+    Box-only (needs zmq/msgspec via `uv sync --extra box`). `--show-payload` runs standalone
+    (no vLLM) to verify the metadata-only guarantee."""
     import argparse
     import json
 
@@ -119,11 +154,11 @@ def main(argv=None):
     from .mock_stream import GOLDEN_FINGERPRINT
 
     p = argparse.ArgumentParser(description="vLLM-leg telemetry agent (live subscriber)")
-    p.add_argument("--endpoints", required=True,
+    p.add_argument("--endpoints",
                    help='e.g. "0=tcp://localhost:5557,1=tcp://localhost:5558"')
-    p.add_argument("--provenance", required=True, help="path to stack-provenance JSON")
-    p.add_argument("--salt", required=True, help="deployment salt for block-id hashing")
-    p.add_argument("--block-size", type=int, required=True)
+    p.add_argument("--provenance", help="path to stack-provenance JSON")
+    p.add_argument("--salt", help="deployment salt for block-id hashing")
+    p.add_argument("--block-size", type=int)
     p.add_argument("--max-batches", type=int, default=None)
     p.add_argument("--duration", type=float, default=None,
                    help="stop after N wall-seconds and dump (the measurement window); "
@@ -131,8 +166,21 @@ def main(argv=None):
     p.add_argument("--record-cap", type=int, default=100_000,
                    help="max per-event records held in RAM (counts stay exact); a long "
                         "run would otherwise OOM. A real deployment streams to a sink.")
-    p.add_argument("--out", required=True, help="output records JSON path")
+    p.add_argument("--out", help="output records JSON path")
+    p.add_argument("--show-payload", action="store_true",
+                   help="print exactly what the agent retains and emits (metadata only), on "
+                        "the pinned mock stream, and exit -- verify no KV content leaves the "
+                        "host. Needs no live vLLM.")
     a = p.parse_args(argv)
+
+    if a.show_payload:
+        _show_payload()
+        return
+    missing = [n for n in ("endpoints", "provenance", "salt", "block_size", "out")
+               if getattr(a, n) in (None,)]
+    if missing:
+        p.error("required unless --show-payload: " + ", ".join("--" + m.replace("_", "-")
+                                                               for m in missing))
 
     endpoints = {}
     for pair in a.endpoints.split(","):

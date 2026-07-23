@@ -47,6 +47,16 @@ def test_omit_defaults_trailing_medium_is_tolerated():
     assert isinstance(ev2, BlockRemoved) and ev2.medium is None
 
 
+def test_decode_drops_token_content_on_ingest():
+    # vLLM's BlockStored carries token_ids (prompt tokens); the agent must NEVER retain them.
+    # Dropped at the decode boundary -> the metadata-only guarantee (--show-payload verifies).
+    ev = decode_event(["BlockStored", [1, 2], None, [10, 11, 12, 13, 14, 15, 16, 17],
+                       4, None, "GPU"])
+    assert isinstance(ev, BlockStored)
+    assert ev.block_hashes == [1, 2] and ev.block_size == 4 and ev.medium == "GPU"  # metadata kept
+    assert ev.token_ids is None  # token content dropped, never held
+
+
 def test_unknown_tag_is_schema_drift():
     with pytest.raises(SchemaDriftError):
         decode_event(["BlockRelocated", [1], "GPU"])

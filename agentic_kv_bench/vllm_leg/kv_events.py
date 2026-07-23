@@ -121,6 +121,13 @@ def decode_event(arr):
             f"{tag} arity {len(payload)} != expected {len(fields)} "
             f"({fields}); schema drift vs {VLLM_SOURCE_REF}"
         )
+    if tag == "BlockStored":
+        # DROP token content at the decode boundary. vLLM's BlockStored carries token_ids
+        # (the prompt tokens of the block); the agent uses only block_hashes and never the
+        # token ids. Nulling them here means the process never RETAINS KV content -- the
+        # metadata-only guarantee, verifiable with `subscribe --show-payload`. (KV tensors
+        # themselves never leave the GPU; they are not in the event stream at all.)
+        payload[2] = None  # token_ids position (fields[2])
     return cls(*payload)
 
 

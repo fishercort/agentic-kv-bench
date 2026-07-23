@@ -25,7 +25,8 @@ minute-one check, not agent logic.
 import hashlib
 
 # Record keys that would carry KV *content* rather than metadata. Enforced by
-# assert_metadata_only: contents are never read, serialized, or transmitted.
+# assert_metadata_only: content is never retained, serialized, or transmitted (token ids
+# in vLLM's event stream are dropped at decode; KV tensors never leave the GPU).
 _FORBIDDEN_CONTENT_KEYS = frozenset({"token_ids", "tokens", "text", "content", "prompt"})
 
 
