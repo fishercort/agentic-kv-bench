@@ -37,10 +37,15 @@ def seed_agreement(stored_hashes_by_instance):
     return all(list(s) == first for s in sets[1:])
 
 
-def subscribe(endpoints, agent, golden_fingerprint=None, max_batches=None):
+def subscribe(endpoints, agent, golden_fingerprint=None, max_batches=None,
+              duration_s=None):
     """Subscribe to each instance's ZMQ endpoint and feed decoded batches to `agent` in
     arrival order. endpoints: {instance_id: "tcp://host:port"}. Box-only (needs zmq +
-    msgspec). The first batch per instance is schema-checked against golden_fingerprint."""
+    msgspec). The first batch per instance is schema-checked against golden_fingerprint.
+    Stops at max_batches, after duration_s wall-seconds, or on SIGINT — whichever first;
+    the caller dumps agent state after this returns (so a timed measurement window works)."""
+    import time
+
     import msgspec  # box-only
     import zmq  # box-only
 
@@ -55,9 +60,17 @@ def subscribe(endpoints, agent, golden_fingerprint=None, max_batches=None):
         socks[s] = inst
     checked = set()
     seen = 0
+    deadline = None if duration_s is None else time.monotonic() + duration_s
     try:
         while max_batches is None or seen < max_batches:
-            for s, _ in poller.poll():
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                ready = poller.poll(timeout=min(500.0, remaining * 1000))
+            else:
+                ready = poller.poll(timeout=500.0)
+            for s, _ in ready:
                 inst = socks[s]
                 _topic, _seq, payload = s.recv_multipart()
                 arr = msgspec.msgpack.decode(payload)
@@ -68,6 +81,8 @@ def subscribe(endpoints, agent, golden_fingerprint=None, max_batches=None):
                     checked.add(inst)
                 agent.ingest_batch(inst, decode_batch(arr))
                 seen += 1
+    except KeyboardInterrupt:
+        pass  # clean stop -> caller still dumps agent state
     finally:
         for s in socks:
             s.close(0)
@@ -90,6 +105,9 @@ def main(argv=None):
     p.add_argument("--salt", required=True, help="deployment salt for block-id hashing")
     p.add_argument("--block-size", type=int, required=True)
     p.add_argument("--max-batches", type=int, default=None)
+    p.add_argument("--duration", type=float, default=None,
+                   help="stop after N wall-seconds and dump (the measurement window); "
+                        "Ctrl-C also stops cleanly and dumps")
     p.add_argument("--out", required=True, help="output records JSON path")
     a = p.parse_args(argv)
 
@@ -101,7 +119,7 @@ def main(argv=None):
         provenance = json.load(f)
     agent = TelemetryAgent(provenance, salt=a.salt, block_size=a.block_size)
     subscribe(endpoints, agent, golden_fingerprint=GOLDEN_FINGERPRINT,
-              max_batches=a.max_batches)
+              max_batches=a.max_batches, duration_s=a.duration)
     with open(a.out, "w") as f:
         json.dump({"residual_tokens": agent.residual_tokens,
                    "records": agent.records}, f, indent=1)
