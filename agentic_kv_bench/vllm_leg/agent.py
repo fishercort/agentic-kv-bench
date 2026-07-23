@@ -146,7 +146,9 @@ class TelemetryAgent:
             self._evict_add(evicted, h)  # dropped; a later re-store is eviction recompute
             self._emit(self._lifecycle_record(source_id, h, event.medium, event.ts, "evict"))
         elif kind == "ClearedAll":
-            for h in list(held):
+            # sorted, not set-iteration order, so the emitted record order is deterministic
+            # and language-neutral (a Rust port reproduces it exactly).
+            for h in sorted(held):
                 self._evict_add(evicted, h)
                 self._emit(self._lifecycle_record(source_id, h, event.medium, event.ts,
                                                   "clear"))
