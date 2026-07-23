@@ -1,7 +1,7 @@
 """Replay driver: shard the synthesized corpus across the fleet and send each session's
-requests to vLLM's OpenAI-compatible /v1/completions, pacing by the trace's arrival times
-(docs/vllm-leg-design.md §3, §4). httpx is box-only and imported lazily; sharding and
-pacing are pure and unit-tested locally.
+requests to vLLM's OpenAI-compatible /v1/completions, pacing by the trace's arrival
+times. httpx is box-only and imported lazily; sharding and pacing are pure and
+unit-tested locally.
 
 vLLM /v1/completions accepts `prompt` as a list of token ids directly, so the synthesized
 token ids (declared-prefix mode) go on the wire without a tokenizer round-trip."""
@@ -50,7 +50,7 @@ def build_workload(traces, n_instances, shared_prefix_blocks, block_size, vocab_
 def send_completion(base_url, token_ids, max_tokens, model, timeout=60.0):
     """POST one prefill+decode to vLLM. Box-only (httpx). Returns the response JSON, whose
     `usage.prompt_tokens_details.cached_tokens` (the OpenAI-surfaced name for the internal
-    `num_local_cached_tokens`) gives the local-APC cross-check (§2)."""
+    `num_local_cached_tokens`) gives the local-APC cross-check."""
     import httpx  # box-only
 
     resp = httpx.post(
@@ -130,14 +130,14 @@ def main(argv=None):
     traces = _load_corpus(a.corpus)
     kept, excluded = select_by_footprint(traces, a.footprint_cap)
     if excluded:
-        # no silent truncation: the deep tail is reported, not hidden (§3, provenance rule)
+        # no silent truncation: the deep tail is reported, not hidden (provenance rule)
         print(f"footprint-cap {a.footprint_cap}: replaying {len(kept)} sessions, "
               f"EXCLUDED {len(excluded)} deep-tail sessions (reported in the leg's scope)")
     workload = build_workload(kept, len(base), a.shared_prefix_blocks,
                               a.block_size, a.vocab_size)
 
     # concurrency cap = the band control: at most K sessions in flight -> concurrent
-    # working set = K * mean_footprint, which sets cap/demand (see runbook band table).
+    # working set = K * mean_footprint, which sets cap/demand.
     gate = threading.Semaphore(a.max_concurrent) if a.max_concurrent else None
 
     def run_session(url, sess):

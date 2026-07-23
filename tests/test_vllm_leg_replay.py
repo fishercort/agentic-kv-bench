@@ -1,5 +1,5 @@
 """Declared-prefix replay mode: the modeled cross-session sharing is exactly S blocks and
-nothing leaks past it (docs/vllm-leg-design.md §3). This is the offline instrument check
+nothing leaks past it. This is the offline instrument check
 for headline number one before any rental."""
 
 from agentic_kv_bench.vllm_leg.replay import (

@@ -1,6 +1,6 @@
 """The telemetry agent: the shipping deliverable, coded and tested with zero GPU time.
 
-Subscriber-only (no request-path proxy; L2 §0.1 observe tier). It consumes decoded
+Subscriber-only (no request-path proxy; the observe tier). It consumes decoded
 KV-event batches from N vLLM instances and produces two things:
 
   1. Residual dedup (headline number one), event-driven. vLLM emits `BlockStored` only
@@ -10,14 +10,13 @@ KV-event batches from N vLLM instances and produces two things:
      whose hash is currently RESIDENT on another instance is recompute a cross-instance
      cache would have avoided: that is the residual. residual_tokens = residual_blocks *
      block_size. `num_local_cached_tokens` is carried for the cross-check and dollarization,
-     not re-subtracted (it is baked into what does/doesn't get stored). See
-     docs/vllm-leg-design.md §2, §5.
+     not re-subtracted (it is baked into what does/doesn't get stored).
 
-  2. Day-one schema records (docs §1) — the impossible-to-retrofit fields, emitted ONCE
+  2. Day-one schema records — the impossible-to-retrofit fields, emitted ONCE
      here: stack provenance, salted hash domains, metadata-only-at-the-wire, retention /
      lifecycle events, per-tenant attribution, counterfactual forward window.
 
-Correctness assumption (runbook-enforced, §6): both instances share PYTHONHASHSEED + hash
+Correctness assumption (operationally enforced): both instances share PYTHONHASHSEED + hash
 algo, so the same prefix hashes identically across instances. Without that, cross-instance
 overlap is silently zero; the agent cannot detect it from events alone, so it is a live
 minute-one check, not agent logic.
@@ -26,7 +25,7 @@ minute-one check, not agent logic.
 import hashlib
 
 # Record keys that would carry KV *content* rather than metadata. Enforced by
-# assert_metadata_only: contents are never read, serialized, or transmitted (§1).
+# assert_metadata_only: contents are never read, serialized, or transmitted.
 _FORBIDDEN_CONTENT_KEYS = frozenset({"token_ids", "tokens", "text", "content", "prompt"})
 
 
@@ -58,7 +57,7 @@ def assert_metadata_only(record):
 
 class TelemetryAgent:
     def __init__(self, provenance, salt, block_size, salt_domain="default"):
-        # provenance: stack fields stamped into every record (§1 stack provenance).
+        # provenance: stack fields stamped into every record (stack provenance).
         # Must include event_schema_version so the corpus survives a vLLM bump.
         self.provenance = dict(provenance)
         self.salt = salt
@@ -145,7 +144,7 @@ class TelemetryAgent:
         return emitted
 
     def _lifecycle_record(self, instance_id, h, medium, ts, reason):
-        # Retention / lifecycle audit trail (§1). Records posture, never a destruction
+        # Retention / lifecycle audit trail. Records posture, never a destruction
         # guarantee. counterfactual_window filled by the band analysis downstream.
         return assert_metadata_only({
             **self.provenance,

@@ -3,7 +3,7 @@
 Transcribed and VERIFIED against vLLM source (see VLLM_SOURCE_REF) so the telemetry
 agent can be coded and unit-tested with zero GPU time. The on-box minute-one check
 diffs a live decoded batch against SCHEMA_FINGERPRINT; drift surfaces as a diff, not a
-mystery (docs/vllm-leg-design.md §6).
+mystery.
 
 Wire format (ZmqEventPublisher, v0.11.0): PUB socket, 3-part multipart message
     (topic_bytes, seq.to_bytes(8, "big"), msgpack_payload)
@@ -22,9 +22,9 @@ Operational trap (verified in kv_cache_utils.py, load-bearing for residual dedup
 `ExternalBlockHash = Union[bytes, int]`, chained by `hash_fn((parent, tokens, extra))`,
 and `NONE_HASH` (the seed of every prefix's first block) is `os.urandom(32)` UNLESS
 `PYTHONHASHSEED` is set. Two instances with different NONE_HASH hash the SAME prefix
-differently, so cross-instance overlap reads as zero. The runbook pins the same
+differently, so cross-instance overlap reads as zero. Both instances must pin the same
 PYTHONHASHSEED + sha256 on both instances; the agent assumes that pin holds and asserts
-it in the minute-one check (see vllm-leg-design.md §6).
+it in the minute-one check.
 """
 
 from dataclasses import dataclass, field

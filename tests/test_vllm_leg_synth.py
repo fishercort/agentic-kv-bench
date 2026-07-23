@@ -1,5 +1,5 @@
 """The replayer's acceptance test: token synthesis preserves prefix-sharing exactly
-and creates no false sharing (docs/vllm-leg-design.md §3). This is load-bearing for
+and creates no false sharing. This is load-bearing for
 residual dedup: if synthesis broke sharing, vLLM's hashing would not reproduce the
 cross-instance overlap the headline number is computed from.
 """

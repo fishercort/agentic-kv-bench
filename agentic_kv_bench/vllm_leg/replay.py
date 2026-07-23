@@ -1,4 +1,4 @@
-"""Declared-prefix synthesis mode for the replayer (docs/vllm-leg-design.md §3).
+"""Declared-prefix synthesis mode for the replayer.
 
 The corpus is `hash_id_scope: local` for all 739 traces (verified) and every trace
 numbers blocks from 1, so it preserves WITHIN-session structure but discards CROSS-session
@@ -14,7 +14,7 @@ the cross-instance overlap); everything past block S is per-trace namespaced, so
 session structure is preserved and NO false cross-session sharing is created.
 
 S is not assumed: `measured_shared_prefix_blocks` reports the empirical distribution from
-the corpus's real system_tokens/tool_tokens so the sweep's x-axis is grounded (§3). The
+the corpus's real system_tokens/tool_tokens so the sweep's x-axis is grounded. The
 caveat below travels with every number this produces.
 """
 
@@ -71,7 +71,7 @@ def synth_session(trace, shared_prefix_blocks, block_size, vocab_size):
 
 
 def measured_shared_prefix_blocks(traces, block_size):
-    """Empirical S distribution grounding the sweep (§3): system+tool prefix in blocks,
+    """Empirical S distribution grounding the sweep: system+tool prefix in blocks,
     per trace, at the given block_size. Returns sorted list; caller reports percentiles /
     where mass concentrates. S is measured, not assumed."""
     vals = []

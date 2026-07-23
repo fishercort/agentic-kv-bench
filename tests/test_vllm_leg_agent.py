@@ -1,5 +1,5 @@
 """Telemetry-agent acceptance tests, run with zero GPU time against the version-pinned
-mock (docs/vllm-leg-design.md §1, §2, §6)."""
+mock."""
 
 import pytest
 

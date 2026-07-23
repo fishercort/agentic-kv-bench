@@ -4,7 +4,7 @@ The corpus traces are metadata (per-block content hashes, lengths, structure), n
 text. To replay through real vLLM we synthesize token sequences whose PREFIX-SHARING
 matches the trace exactly, so vLLM's real prefix-chained hashing reproduces the
 cross-instance overlap that residual dedup (headline number two) is computed from.
-See docs/vllm-leg-design.md §3. The report phrase is "real session structure,
+The report phrase is "real session structure,
 synthesized content", not "real traffic".
 
 The invariant (this module's whole job): `T(content_hash) -> block_size token ids`

@@ -1,4 +1,4 @@
-"""Dollarization arithmetic (docs/vllm-leg-runbook.md §5): prefill $/token and $/month
+"""Dollarization arithmetic: prefill $/token and $/month
 extrapolation, with a worked hand-checkable case."""
 
 import pytest

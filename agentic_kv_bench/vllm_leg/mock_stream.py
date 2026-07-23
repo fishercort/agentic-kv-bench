@@ -1,4 +1,4 @@
-"""Version-pinned mock of the vLLM KV-event stream (docs/vllm-leg-design.md §6).
+"""Version-pinned mock of the vLLM KV-event stream.
 
 The agent is coded and unit-tested against THIS recording, not a live GPU. Events are
 in the exact `array_like` + tag-first wire form vLLM's msgpack encoder produces (see
@@ -9,8 +9,8 @@ and diffs it against GOLDEN_FINGERPRINT: schema drift is a diff, not a mystery.
 Provenance is pinned to the same vLLM ref as kv_events. Block hashes here are small ints
 for readability; on the box they are 32-byte sha256 (ExternalBlockHash = Union[bytes,
 int]) and the agent treats them opaquely, so the shape is identical. The one thing this
-mock CANNOT capture is the NONE_HASH/PYTHONHASHSEED cross-instance seed agreement (§6) —
-that is a live-only sanity check, called out in the runbook.
+mock CANNOT capture is the NONE_HASH/PYTHONHASHSEED cross-instance seed agreement —
+that is a live-only sanity check.
 """
 
 from .kv_events import EVENT_SCHEMA_VERSION, VLLM_SOURCE_REF, decode_batch

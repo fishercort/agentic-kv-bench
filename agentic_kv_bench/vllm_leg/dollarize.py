@@ -1,11 +1,11 @@
-"""Turn measured token quantities into $/month (docs/vllm-leg-runbook.md §5).
+"""Turn measured token quantities into $/month.
 
 Two inputs, two roles (kept distinct, same split as spec-sheet vs achievable bandwidth):
   - provider $/GPU-hour + rate-card date: the operator-facing rate; goes in the report.
     Cite the rate card and date (provenance).
   - measured vLLM prefill throughput (tokens/s, fleet) on the box: the cost model's
     grounding, measured on the SAME engine whose waste we report. NOT miniserve's engine
-    cost model (that feeds the separate §9 hardware corpus via gpu_day; conflating them
+    cost model (that feeds the separate hardware corpus via gpu_day; conflating them
     would be an apples-to-oranges provenance error).
 
 prefill $/token = (fleet $/hour) / 3600 / (fleet prefill tokens/s). A token quantity
@@ -37,7 +37,7 @@ def monthly_dollars(tokens, window_seconds, gpu_hour_rate, n_gpus, prefill_token
 
 def dollarize_result(tokens, window_seconds, prov, label):
     """Build a provenance-stamped dollarization record from a provenance dict carrying
-    dollarization fields (see runbook provenance.json). Returns a dict ready to commit
+    dollarization fields (see the provenance JSON). Returns a dict ready to commit
     alongside the raw artifacts; `label` travels for the modeled number."""
     monthly = monthly_dollars(
         tokens, window_seconds,

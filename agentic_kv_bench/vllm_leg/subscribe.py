@@ -1,5 +1,5 @@
 """Live ZMQ subscriber that feeds decoded vLLM KV events into the telemetry agent, plus
-the minute-one sanity checks (docs/vllm-leg-design.md §6). zmq/msgspec are box-only, so
+the minute-one sanity checks. zmq/msgspec are box-only, so
 they are imported lazily; the sanity-check logic is pure and unit-tested locally.
 
 Wire (v0.11.0): SUB socket, 3-part multipart (topic, seq:8-byte-big-endian, msgpack).
@@ -11,7 +11,7 @@ from .mock_stream import wire_fingerprint
 
 
 def check_schema(live_batch_arr, known_fingerprints=None):
-    """Minute-one schema gate (§6). The hard gate is that `decode_batch` accepts the live
+    """Minute-one schema gate. The hard gate is that `decode_batch` accepts the live
     batch — it raises SchemaDriftError on an unknown tag or wrong arity, which IS the
     abort. Returns (fingerprint, is_known): a fingerprint not among the pinned golden
     shapes is not necessarily drift (omit_defaults varies the optional `medium`), so it is
@@ -24,7 +24,7 @@ def check_schema(live_batch_arr, known_fingerprints=None):
 
 
 def seed_agreement(stored_hashes_by_instance):
-    """PYTHONHASHSEED cross-instance check (§6): feed BOTH instances one identical probe
+    """PYTHONHASHSEED cross-instance check: feed BOTH instances one identical probe
     prefix, collect the BlockStored hashes each emits, and confirm they MATCH. If they
     differ, NONE_HASH differs across instances, prefix-chained hashes diverge, and
     cross-instance overlap silently reads zero. Returns True on agreement.
