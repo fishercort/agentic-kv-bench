@@ -1,8 +1,8 @@
 """Turn measured token quantities into $/month (docs/vllm-leg-runbook.md §5).
 
 Two inputs, two roles (kept distinct, same split as spec-sheet vs achievable bandwidth):
-  - provider $/GPU-hour + rate-card date: the number a prospect recognizes; goes in the
-    report. Cite the rate card and date (provenance).
+  - provider $/GPU-hour + rate-card date: the operator-facing rate; goes in the report.
+    Cite the rate card and date (provenance).
   - measured vLLM prefill throughput (tokens/s, fleet) on the box: the cost model's
     grounding, measured on the SAME engine whose waste we report. NOT miniserve's engine
     cost model (that feeds the separate §9 hardware corpus via gpu_day; conflating them
